@@ -1,0 +1,65 @@
+services:
+
+  redis:
+    image: redis:7.2/alpine
+    container_name: redis
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+
+  postgresql:
+    image: postgres:16-alpine
+    container_name: postgresql
+    environment:
+        POSTGRES_USER: ${DB_USER}
+        POSTGRES_PASSWORD: ${DB_PASSWORD}
+        POSTGRES_DB: ${DB_NAME}
+    ports:
+        - "5432:5432"
+    volumes:
+        - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+        test: ["CMD-SHELL","pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
+        start_period: 10
+    
+
+  grafana:
+    image: grafana/grafana-enterprise
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GL_LOG_LEVEL=debug
+    ports:
+      - '3000:3000'
+    volumes:
+      - 'grafana_storage:/var/lib/grafana'
+
+  paperone:
+    
+    build:
+      context: ./paperone
+      dockerfile: Dockerfile
+    
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgresql:5432/${DB_NAME}
+      DB_HOST: postgresql
+      DB_PORT: 5432
+
+      YOUTRACK_TOKEN: ${YOUTRACK_TOKEN}
+
+    volumes:
+      - ./paperone:/app
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_storage: {}
