@@ -52,6 +52,7 @@ services:
       DB_PORT: 5432
 
       YOUTRACK_TOKEN: ${YOUTRACK_TOKEN}
+      YOUTRACK_URL: ${YOUTRACK_URL}
 
     volumes:
       - ./paperone:/app
