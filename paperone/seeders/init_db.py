@@ -3,7 +3,7 @@ from models.issues import Base
 from youtrack.youTrack import get_issues
 from services.issue_repository import IssueRepository
 
-Base.metadata.create_all()
+Base.metadata.create_all(engine)
 
 fields = 'id,idReadable,created,customFields(name,value(name))'
 base_query= 'project; Kalliope Type: Bug'

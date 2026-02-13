@@ -1,4 +1,4 @@
-from sqlalchemy.org import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import(
     TIMESTAMP,
     BIGINT,

@@ -43,7 +43,7 @@ class IssueCustomField(Base):
     changes: Mapped[list["IssueCustomFieldChange"]] = relationship(back_populates="field",cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("issue_id", "name")
+        UniqueConstraint("issue_id", "name"),
     )
 
 

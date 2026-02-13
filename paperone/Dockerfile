@@ -11,3 +11,5 @@ COPY youtrack/ youtrack/
 COPY seeders/ seeders/
 COPY models/ models/
 COPY app.py .
+
+CMD ["python","app.py"]
