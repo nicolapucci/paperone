@@ -1,5 +1,6 @@
 import os
 import requests
+from datetime import datetime,timezone
 
 YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN')
 YOUTRACK_URL = os.getenv('YOUTRACK_URL')
@@ -13,7 +14,7 @@ last_update = None
 update_query = f"{base_query} updated: {last_update} .. Now" #to check the type of the timestamp accepted by youtrack
 
 
-def issues(fields,query):
+def get_issues(fields,query):
 
     top = 1000
     skip = 0
@@ -46,17 +47,10 @@ def issues(fields,query):
         skip += top
         newdata = []
         for issue in issue_data:
-            newitem = issue.copy()
-            for field in newdata.customFields:
-                name = field['name']
-                value = field['value']['name'] if (value in field and name in field['value']) else None
-                if(name in ['Origine', 'Type']):
-                    newitem[name]=value
-            del newitem.customFields
-            newdata.append(newitem)
+            issue['created'] = datetime.fromtimestamp(issue['created']/1000,tz=timezone.utc)
+            issue['updated'] = datetime.fromtimestamp(issue['updated']/1000,tz=timezone.utc)
 
-        issues.append(newdata)
+            newdata.append(issue)
+
+        issues.extend(newdata)
     return issues
-
-if __name__ == "__main__":
-    print(issues())

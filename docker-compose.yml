@@ -23,7 +23,7 @@ services:
         interval: 5s
         timeout: 5s
         retries: 5
-        start_period: 10
+        start_period: 10s
     
 
   grafana:
@@ -54,7 +54,8 @@ services:
       YOUTRACK_TOKEN: ${YOUTRACK_TOKEN}
       YOUTRACK_URL: ${YOUTRACK_URL}
 
-    volumes:
+# RIMUOVERE QUANDO SI ESCE DA DEV STAGE
+    volumes: 
       - ./paperone:/app
     depends_on:
       postgresql:

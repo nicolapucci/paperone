@@ -9,124 +9,80 @@ from sqlalchemy import (
 from services.postgres_engine import engine
 from models.issues import (
     Issue,
-    ActivityItem
+    IssueCustomField,
+    StringFieldValue,
+    NumberFieldValue,
+    DateFieldValue
 )
 
+BATCH_SIZE = 1000
 
 class IssueRepository:
 
     @staticmethod
-    def create_issue(yt_id, id_readable, origin, type, created):
-        try:
-            with Session(engine) as session:
-                with session.begin():
+    def bulk_create_issue_with_fields(issues_data:dict):
+
+        with Session(engine) as session:
+            try:
+                batch = []
+                for issue_data in issues_data:
+                    
+
                     issue = Issue(
-                        youtrack_id=yt_id,
-                        id_readable=id_readable,
-                        origin=origin,
-                        type=type,
-                        created=created
+                        youtrack_id=issue_data.get('id'),
+                        id_readable=issue_data.get('idReadable'),
+                        created=issue_data.get('created'),
+                        updated=issue_data.get('updated'),
                     )
-                    session.add(issue)
-
-                session.refresh(issue)  # opzionale, se vuoi id generato
-
-            return issue
-
-        except Exception as e:
-            print(f"Error during issue creation!: {e}")
-            return None
+                    batch.append(issue)
 
 
-    @staticmethod
-    def create_issue_bulk_raw(issue_dicts: list[dict]):
-        try:
-            with Session(engine) as session:
-                stmt = insert(Issue).values(issue_dicts)
-                stmt = stmt.on_conflict_do_nothing(
-                    index_elements=["youtrack_id"]
-                )
-                session.execute(stmt)
-                session.commit()
-        except Exception as e:
-            print(f"Bulk insert failed: {e}")
+                    for field in issue_data.get('customFields', []):
 
+                        name = field.get('name')
+                        raw_value = field.get('value')
+                        raw_value = raw_value.get('name') if isinstance(raw_value,dict) else raw_value
+                        field_type = field.get('type', 'string')
 
-    def user_reported_bugs():
-        try:
-            with Session(engine) as session:
-                stmt = select(Issue).where(
-                    and_(
-                        Issue.type == 'Bug',
-                        Issue.origin == 'Cliente'
-                    )
-                    )
-                issues = session.execute(stmt)
-                return issues
-        except Exception as e:
-            print(f"Error retrieving Issue data:  {e}")
-            return None
-    
-    def user_reported_bugs_count():
-        try:
-            with Session(engine) as session:
-                stmt = select(func.count()).select_from(Issue).where(
-                    and_(
-                        Issue.type == 'Bug',
-                        Issue.origin == 'Cliente'
-                    )
-                )
-                result = session.execute(stmt).scalar_one()
-                return result
-        except Exception as e:
-            print(f"Error counting Issues: {e}")
-            return 0
-    
-    def total_reported_bugs():
-        try:
-            with Session(engine) as session:
-                stmt = select(func.count()).select_from(Issue).where(
-                    Issue.type == 'Bug'
-                )
-                result = session.execute(stmt).scalar_one()
-                return result
-        except Exception as e:
-            print(f"Error counting bugs: {e}")
-            return 0
-        
+                        custom_field = IssueCustomField(
+                            issue=issue,
+                            name=name
+                        )
 
+                        batch.append(custom_field)
 
+                        if field_type == 'string':
+                            custom_field_value = StringFieldValue(
+                                custom_field=custom_field
+                            )
+                            custom_field_value.value = raw_value
 
-class ActivityItemRepository:
+                        elif field_type == 'number':
+                            custom_field_value = NumberFieldValue(
+                                custom_field=custom_field
+                            )
+                            custom_field_value.value = int(raw_value) if raw_value else None
 
-    @staticmethod
-    def create_activityItem(removed,added,timestamp,issue_id,target_member):
-        try:
-            with Session(engine) as session:
-                with session.begin():
-                    activityItem = ActivityItem(
-                        removed,
-                        added,
-                        timestamp,
-                        issue_id,
-                        target_member
-                    )
-                    session.add(activityItem)
-                session.refresh()
-                return activityItem
-        except Exception as e:
-            print(f"Error creating IssueActivity item: {e}")
-            session.rollback()
-            return None
-        
+                        elif field_type == 'date':
+                            custom_field_value = DateFieldValue(
+                                custom_field=custom_field
+                            )
+                            custom_field_value.value = raw_value
 
-    @staticmethod
-    def bulk_create_actibityItem(activityItem_dicts:list[dict]):
-        try:
-            with Session(engine) as session:
-                stmt = insert(ActivityItem).values(activityItem_dicts)
-                session.execute(stmt)
-                session.commit()
-        except Exception as e:
-            print(f"Error during bulk insert of ActivityItems: {e}")
+                        else:
+                            continue
 
+                        batch.append(custom_field_value)
+                        if len(batch)> BATCH_SIZE:
+                            session.add_all(batch)
+                            session.commit()
+                            session.expunge_all()
+                            batch = []
+                if batch:
+                    session.add_all(batch)
+                    session.commit()
+                    session.expunge_all()   
+
+            except Exception:
+                session.rollback()
+                raise
