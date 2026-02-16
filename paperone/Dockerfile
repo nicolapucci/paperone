@@ -12,4 +12,6 @@ COPY seeders/ seeders/
 COPY models/ models/
 COPY app.py .
 
+EXPOSE 8000
+
 CMD ["python","app.py"]
