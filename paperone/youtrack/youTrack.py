@@ -3,13 +3,21 @@ import requests
 from datetime import datetime,timezone
 import asyncio
 
+from services.issue_repository import get_max_updated_issue
+
+from services.redis_client import (
+    set_youtrack_last_sync,
+    get_youtrack_last_sync
+)
+
 YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN')
 YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 
 youtrack_server_reachable = False
 update_frequency = 24 #h
-fields = 'id,idReadable,created,customFields(name,value(name))'
-base_query= 'project; Kalliope Type: Bug'
+
+fields = 'id,idReadable,summary,created,customFields(name,value(name))'
+base_query= 'project: Kalliope Type: Bug'
 
 
 def update_query(last_update):
@@ -58,30 +66,36 @@ def get_issues(fields,query):
     return issues
 
 
-    async def youTrack_worker():
+async def youTrack_worker():
 
-        if youtrack_server_reachable:
-            issues = get_issues(fields=fields,query=base_query)
+    while True:
+        last_sync = get_youtrack_last_sync()
+
+        if not last_sync:
+            last_sync = IssueRepository.get_max_updated_issue()
+            
+        if last_sync and youtrack_server_reachable:
+
+            try:
+                issues = get_issues(fields=fields,query=update_query(last_sync))
+
+                IssueRepository.update_issues(issues)
+            except Exception as e:
+                print(f"Error during sync with yt:{e}")
+                continue
+
         else:
-            with open('./issue.json') as p:
-                issues = json.load(p)
 
-        IssueRepository.bulk_create_issue_with_fields(issues_data=issues)
+            if youtrack_server_reachable:
+                issues = get_issues(fields=fields,query=base_query)
+            else:
+                with open('./issue.json') as p:
+                    issues = json.load(p)
 
-        last_pull = datetime.datetime.now()
+            IssueRepository.bulk_create_issue_with_fields(issues_data=issues)
 
-        if youtrack_server_reachable:
+        set_youtrack_last_sync()
 
-            while True:
-                await asyncio.sleep(
+        await asyncio.sleep(
                     60*60*(update_frequency+1)
                 )
-                try:
-                    issues = get_issues(fields=fields,query=update_query(last_pull))
-
-                    last_pull = datetime.datetime.now()
-
-                    IssueRepository.update_issues(issues)
-                except Exception as e:
-                    print(f"Error during sync with yt:{e}")
-                    continue

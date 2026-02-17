@@ -40,6 +40,7 @@ class IssueRepository:
                     issue = Issue(
                         youtrack_id=issue_data.get('id'),
                         id_readable=issue_data.get('idReadable'),
+                        summary=issue_data.get('summary'),
                         created=convert_to_timestamp(issue_data.get('created')),
                         updated=convert_to_timestamp(issue_data.get('updated')),
                     )
@@ -97,7 +98,14 @@ class IssueRepository:
                 session.rollback()
                 raise
 
-                
+    @staticmethod
+    def get_max_updated_issue():
+        stmt = select(func.max(Issue.updated))
+
+        with Session(engine) as session:
+            max_updated = session.execute(stmt).scalar_one_or_none()
+        return max_updated
+
     @staticmethod
     def update_issues(issue_data:list):#per ora evita i duplicati, ma deve aggiornare con i dati nuovi
 

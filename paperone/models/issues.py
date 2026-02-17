@@ -16,6 +16,8 @@ from models.base import Base
 class Issue(Base):
     __tablename__ = 'issue'
 
+    summary:Mapped[str]
+
     id:Mapped[int] = mapped_column(primary_key=True)
 
     youtrack_id: Mapped[str] = mapped_column(unique=True,nullable=False)

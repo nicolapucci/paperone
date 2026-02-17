@@ -1,8 +1,5 @@
-from services.postgres_engine import engine
-from models.issues import Base
-from youtrack.youTrack import get_issues
-from services.issue_repository import IssueRepository
 from services.test_repository import TestRepository
+
 import json
 
 try:
