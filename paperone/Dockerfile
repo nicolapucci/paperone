@@ -4,6 +4,8 @@ WORKDIR /app
 
 COPY requirements.txt .
 
+RUN apt update && apt install postgresql-client
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/ services/

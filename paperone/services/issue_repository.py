@@ -97,6 +97,80 @@ class IssueRepository:
                 session.rollback()
                 raise
 
+                
+    @staticmethod
+    def update_issues(issue_data:list):#per ora evita i duplicati, ma deve aggiornare con i dati nuovi
+
+        with Session(engine) as session:
+            try:
+                batch = []
+                for issue_data in issues_data:
+                    
+                    issue = session.query(Issue).filter_by(id_readable= issue_data.get('idReadable')).first()
+
+                    if not issue:
+
+                        issue = Issue(
+                            youtrack_id=issue_data.get('id'),
+                            id_readable=issue_data.get('idReadable'),
+                            created=convert_to_timestamp(issue_data.get('created')),
+                            updated=convert_to_timestamp(issue_data.get('updated')),
+                        )
+                        batch.append(issue)
+
+
+                        for field in issue_data.get('customFields', []):
+
+                            name = field.get('name')
+                            raw_value = field.get('value')
+                            raw_value = raw_value.get('name') if isinstance(raw_value,dict) else raw_value
+                            raw_value = raw_value if not isinstance(raw_value,list) else None
+                            field_type = field.get('type', 'string')
+
+                            custom_field = IssueCustomField(
+                                issue=issue,
+                                name=name
+                            )
+
+                            batch.append(custom_field)
+
+                            if field_type == 'string':
+                                custom_field_value = StringFieldValue(
+                                    field=custom_field
+                                )
+                                custom_field_value.value = raw_value
+
+                            elif field_type == 'number':
+                                custom_field_value = NumberFieldValue(
+                                    field=custom_field
+                                )
+                                custom_field_value.value = int(raw_value) if raw_value else None
+
+                            elif field_type == 'date':
+                                custom_field_value = DateFieldValue(
+                                    field=custom_field
+                                )
+                                custom_field_value.value = raw_value
+
+                            else:
+                                continue
+
+                        batch.append(custom_field_value)
+                        if len(batch)> BATCH_SIZE:
+                            session.add_all(batch)
+                            session.commit()
+                            session.expunge_all()
+                            batch = []
+                if batch:
+                    session.add_all(batch)
+                    session.commit()
+                    session.expunge_all()   
+
+            except Exception:
+                session.rollback()
+                raise
+
+           
 
     @staticmethod
     def count_reported_bugs():

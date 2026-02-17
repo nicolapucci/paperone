@@ -5,7 +5,8 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy import (
     ForeignKey,
-    UniqueConstraint
+    UniqueConstraint,
+    BOOLEAN
 )
 import datetime
 
@@ -16,7 +17,7 @@ class Product(Base):
 
     id:Mapped[int] = mapped_column(primary_key=True)
     
-    test_runs: Mapped[list["TestRuns"]] = relationship(back_populates='release')
+    test_runs: Mapped[list["TestRun"]] = relationship(back_populates='release')
 
     name:Mapped['str']
     version:Mapped['str']
@@ -28,7 +29,7 @@ class Test(Base):
 
     id_readable: Mapped[str] = mapped_column(unique=True,nullable=False)#mantenuto in tutte le versioni
 
-    automated: Boolean
+    automated = mapped_column(BOOLEAN,default=False)
 
     runs: Mapped[list["TestRun"]] = relationship(back_populates='test')
 
@@ -45,4 +46,5 @@ class TestRun(Base):
 
     rc: Mapped[int]
 
+    status: Mapped[str]
     outcome: Mapped[str]

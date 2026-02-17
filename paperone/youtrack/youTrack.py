@@ -1,17 +1,19 @@
 import os
 import requests
 from datetime import datetime,timezone
+import asyncio
 
 YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN')
 YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 
-
+youtrack_server_reachable = False
+update_frequency = 24 #h
 fields = 'id,idReadable,created,customFields(name,value(name))'
 base_query= 'project; Kalliope Type: Bug'
 
-last_update = None
 
-update_query = f"{base_query} updated: {last_update} .. Now" #to check the type of the timestamp accepted by youtrack
+def update_query(last_update):
+    return f"{base_query} updated: {last_update} .. Now" #to check the type of the timestamp accepted by youtrack
 
 
 def get_issues(fields,query):
@@ -54,3 +56,32 @@ def get_issues(fields,query):
 
         issues.extend(newdata)
     return issues
+
+
+    async def youTrack_worker():
+
+        if youtrack_server_reachable:
+            issues = get_issues(fields=fields,query=base_query)
+        else:
+            with open('./issue.json') as p:
+                issues = json.load(p)
+
+        IssueRepository.bulk_create_issue_with_fields(issues_data=issues)
+
+        last_pull = datetime.datetime.now()
+
+        if youtrack_server_reachable:
+
+            while True:
+                await asyncio.sleep(
+                    60*60*(update_frequency+1)
+                )
+                try:
+                    issues = get_issues(fields=fields,query=update_query(last_pull))
+
+                    last_pull = datetime.datetime.now()
+
+                    IssueRepository.update_issues(issues)
+                except Exception as e:
+                    print(f"Error during sync with yt:{e}")
+                    continue
