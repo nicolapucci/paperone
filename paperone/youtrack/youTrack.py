@@ -3,20 +3,21 @@ import requests
 from datetime import datetime,timezone
 import asyncio
 
-from services.issue_repository import get_max_updated_issue
+from services.issue_repository import IssueRepository
 
 from services.redis_client import (
     set_youtrack_last_sync,
     get_youtrack_last_sync
 )
+import json
 
 YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN')
 YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 
-youtrack_server_reachable = False
+youtrack_server_reachable = True
 update_frequency = 24 #h
 
-fields = 'id,idReadable,summary,created,customFields(name,value(name))'
+fields = 'id,idReadable,summary,created,updated,customFields(name,value(name))'
 base_query= 'project: Kalliope Type: Bug'
 
 
@@ -57,9 +58,6 @@ def get_issues(fields,query):
         skip += top
         newdata = []
         for issue in issue_data:
-            issue['created'] = datetime.fromtimestamp(issue['created']/1000,tz=timezone.utc)
-            issue['updated'] = datetime.fromtimestamp(issue['updated']/1000,tz=timezone.utc)
-
             newdata.append(issue)
 
         issues.extend(newdata)
@@ -99,3 +97,6 @@ async def youTrack_worker():
         await asyncio.sleep(
                     60*60*(update_frequency+1)
                 )
+    
+if __name__ == '__main__':
+    asyncio.run(youTrack_worker())
