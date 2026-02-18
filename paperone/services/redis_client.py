@@ -13,6 +13,5 @@ def get_youtrack_last_sync():
     return redis_client.get('youtrack_sync_timestamp')
 
 def set_youtrack_last_sync():
-    now = datetime.datetime.now()
-    millis = now.microseconds * 1000
-    redis_client.set('youtrack_sync_timestamp',millis)
+    now = datetime.datetime.now().strftime('%Y-%m')
+    redis_client.set('youtrack_sync_timestamp',now)

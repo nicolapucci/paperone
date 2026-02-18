@@ -21,6 +21,8 @@ from datetime import (
     datetime,
     timezone
 )
+from services.logger import logger
+
 BATCH_SIZE = 1000
 
 def convert_to_timestamp(date):
@@ -104,77 +106,125 @@ class IssueRepository:
 
         with Session(engine) as session:
             max_updated = session.execute(stmt).scalar_one_or_none()
-        return max_updated
+        return max_updated.strftime('%Y-%m')
 
     @staticmethod
-    def update_issues(issue_data:list):#per ora evita i duplicati, ma deve aggiornare con i dati nuovi
+    def upsert_issues(issue_data:list):
 
         with Session(engine) as session:
             try:
-                batch = []
-                for issue_data in issues_data:
-                    
-                    issue = session.query(Issue).filter_by(id_readable= issue_data.get('idReadable')).first()
+                logger.info(f"Received {len(issue_data)} issues")
+                issue_rows = []
+                issueCustomField_rows = []
+                issueCustomFieldValues_rows = []
 
-                    if not issue:
+                for data in issue_data:
+                    created=convert_to_timestamp(data.get('created'))
+                    updated=convert_to_timestamp(data.get('updated'))
+                    issue = {
+                        "youtrack_id":data.get('id'),
+                        "id_readable":data.get('idReadable'),
+                        "summary":data.get('summary'),
+                        "created":created,
+                        "updated":updated,
+                    }
+                    issue_rows.append(issue)
+                    for field in data.get('customFields'):
 
-                        issue = Issue(
-                            youtrack_id=issue_data.get('id'),
-                            id_readable=issue_data.get('idReadable'),
-                            created=convert_to_timestamp(issue_data.get('created')),
-                            updated=convert_to_timestamp(issue_data.get('updated')),
-                        )
-                        batch.append(issue)
+                        name = field.get('name')
+                        issueCustomField_rows.append({
+                            "issue_id":data.get('id'),
+                            "name":name,
+                        })
+
+                        value = field.get('value')
+                        value = value if not isinstance(value,list) else value[0] if value else None#tmp incomplete fix
+                        value = value if not isinstance(value,dict) else value.get('name')
+                        
+                        issueCustomFieldValues_rows.append({
+                            "custom_field_id":f"{name}{data.get('id')}",#this is the same value as issueCustomField issue_id
+                            "value_string":value,
+                            "type":"string",
+                        })
 
 
-                        for field in issue_data.get('customFields', []):
+                logger.info(f"Upserting {len(issue_rows)} Issues...")
+                stmt = (
+                    insert(Issue
+                    ).values(issue_rows
+                    ).on_conflict_do_update(
+                        index_elements=["youtrack_id"],
+                        set_={
+                            "summary":insert(Issue).excluded.summary,
+                            "updated":insert(Issue).excluded.updated,
+                        }
+                    )
+                    .returning(Issue.id, Issue.youtrack_id)
+                )
 
-                            name = field.get('name')
-                            raw_value = field.get('value')
-                            raw_value = raw_value.get('name') if isinstance(raw_value,dict) else raw_value
-                            raw_value = raw_value if not isinstance(raw_value,list) else None
-                            field_type = field.get('type', 'string')
+                result = session.execute(stmt).fetchall()
 
-                            custom_field = IssueCustomField(
-                                issue=issue,
-                                name=name
-                            )
+                affetcted_rows = len(result)
+                logger.info(f"returned {len(result)} rows")
 
-                            batch.append(custom_field)
+                issue_id_map = {row.youtrack_id:row.id for row in result}
+                issue_youtrack_id_map = {row.id:row.youtrack_id for row in result}
 
-                            if field_type == 'string':
-                                custom_field_value = StringFieldValue(
-                                    field=custom_field
-                                )
-                                custom_field_value.value = raw_value
+                for row in issueCustomField_rows:
+                    row['issue_id'] = issue_id_map[row['issue_id']]
 
-                            elif field_type == 'number':
-                                custom_field_value = NumberFieldValue(
-                                    field=custom_field
-                                )
-                                custom_field_value.value = int(raw_value) if raw_value else None
+                logger.info(f"Upserting {len(issueCustomField_rows)} IssueCustomFields...")                
+        
+                stmt = (
+                    insert(IssueCustomField
+                    ).values(issueCustomField_rows
+                    ).on_conflict_do_update(
+                        index_elements=["issue_id","name"],
+                        set_={
+                            "name":insert(IssueCustomField).excluded.name
+                        }
+                    ).returning(
+                        IssueCustomField.id,
+                        IssueCustomField.name,
+                        IssueCustomField.issue_id   ,
+                    )
+                )
 
-                            elif field_type == 'date':
-                                custom_field_value = DateFieldValue(
-                                    field=custom_field
-                                )
-                                custom_field_value.value = raw_value
+                result = session.execute(stmt).fetchall()
+                affetcted_rows += len(result)
+                logger.info(f"returned {len(result)} rows")
 
-                            else:
-                                continue
+                issueCustomField_id_map = {f"{row.name}{issue_youtrack_id_map[row.issue_id]}":row.id for row in result}#here i create the map with the same structure as the issuecustomFieldValue_rows' items
+                
+                for row in issueCustomFieldValues_rows:
+                    row['custom_field_id'] = issueCustomField_id_map[row['custom_field_id']]
+                
+                logger.info(f"Upserting {len(issueCustomFieldValues_rows)} IssueCustomFieldValues...")
+                stmt = (
+                    insert(StringFieldValue
+                    ).values(issueCustomFieldValues_rows
+                    ).on_conflict_do_update(
+                        index_elements=['custom_field_id'],
+                        set_={
+                            "value_string":insert(IssueCustomFieldValue).excluded.value_string
+                        }
+                    ).returning(
+                        IssueCustomFieldValue.id,
+                    )
+                )
 
-                        batch.append(custom_field_value)
-                        if len(batch)> BATCH_SIZE:
-                            session.add_all(batch)
-                            session.commit()
-                            session.expunge_all()
-                            batch = []
-                if batch:
-                    session.add_all(batch)
-                    session.commit()
-                    session.expunge_all()   
+                result = session.execute(stmt).fetchall()
+                affetcted_rows += len(result)
+                logger.info(f"returned {len(result)} rows")
 
-            except Exception:
+                session.commit()
+
+                logger.info(f"Upsert completed, affected: {affetcted_rows} rows")
+
+
+
+            except Exception as e:
+                logger.error(f"Error while upserting data: {e}")
                 session.rollback()
                 raise
 
@@ -231,6 +281,7 @@ class IssueRepository:
         
         return customer_reported_bugs,bugs
 
+    @staticmethod
     def defect_rate():
         (customer_reported_bugs,bugs) = IssueRepository.count_reported_bugs()
         customer_bugs_dict = {month: count for month,count in customer_reported_bugs}
