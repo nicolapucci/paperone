@@ -31,7 +31,7 @@ def convert_to_timestamp(date):
 class IssueRepository:
 
     @staticmethod
-    def bulk_create_issue_with_fields(issues_data:dict):
+    def bulk_create_issue_with_fields(issues_data:dict):#non in uso
 
         with Session(engine) as session:
             try:
@@ -281,22 +281,114 @@ class IssueRepository:
         
         return customer_reported_bugs,bugs
 
+
+    @staticmethod
+    def count_reported_bugs_group_by_product():
+
+        icf = aliased(IssueCustomField)
+        icfv = aliased(IssueCustomFieldValue)
+
+        type_exists = (
+            select(1)
+            .select_from(icf)
+            .join(icfv, icf.id == icfv.custom_field_id)
+            .where(
+                icf.issue_id == Issue.id,
+                icf.name == "Type",
+                icfv.value_string == "Bug",
+            )
+            .exists()
+        )
+
+
+        origine_exists = (
+            select(1)
+            .select_from(icf)
+            .join(icfv, icf.id == icfv.custom_field_id)
+            .where(
+                icf.issue_id == Issue.id,
+                icf.name == "Origine",
+                icfv.value_string == "Cliente"
+            )
+            .exists()
+        )
+
+        issue_month = func.date_trunc("month", Issue.created)
+        customer_bugs_stmt = (
+            select(issue_month.label("month"),icfv.value_string,func.count().label("count"))
+        ).select_from(Issue
+        ).join(icf, Issue.id == icf.issue_id
+        ).join(icfv, icf.id == icfv.custom_field_id
+        ).where(type_exists,origine_exists,icf.name == "Product"
+        ).group_by(func.date_trunc("month",Issue.created),icfv.value_string
+        ).order_by(func.date_trunc("month",Issue.created))
+
+        bugs_stmt = (
+            select(issue_month.label("month"),icfv.value_string,func.count().label("count"))
+        ).select_from(Issue
+        ).join(icf, Issue.id == icf.issue_id
+        ).join(icfv, icf.id == icfv.custom_field_id
+        ).where(type_exists,icf.name == "Product"
+        ).group_by(func.date_trunc("month",Issue.created),icfv.value_string
+        ).order_by(func.date_trunc("month",Issue.created))
+
+        with Session(engine) as session:
+            customer_reported_bugs = session.execute(customer_bugs_stmt).all()
+            bugs = session.execute(bugs_stmt).all()
+        
+        return customer_reported_bugs,bugs
+
+
+
     @staticmethod
     def defect_rate():
         (customer_reported_bugs,bugs) = IssueRepository.count_reported_bugs()
-        customer_bugs_dict = {month: count for month,count in customer_reported_bugs}
+        customer_bugs_dict = {(month.timestamp()*1000):count for month,count in customer_reported_bugs}
+        (customer_reported_bugs_by_product,bugs_by_product) = IssueRepository.count_reported_bugs_group_by_product()
+        customer_bugs_dict_by_product = {}
+        logger.info(f"""
+        customer_reported: {customer_reported_bugs}\n
+        
+        bugs: {bugs}\n
 
-        ratios = []
+        customer_reported_by_product: {customer_reported_bugs_by_product}\n
 
+        bugs_by_product: {bugs_by_product}\n
+        """)
+
+        for month,product,count in customer_reported_bugs_by_product:
+            logger.info(f"Month pre elaboration: {month}")
+            month= month.timestamp()*1000
+            logger.info(f"Month post elaboration: {month}")
+            product = product if product else 'Unknown'
+            customer_bugs_dict_by_product[f"{month}{product}"] = count
+        
+        logger.info(f"dict: {customer_bugs_dict}\n dict_by_product:{customer_bugs_dict_by_product}")
+        
+        ratios = {}
         for month,total_count in bugs:
+            month= month.timestamp()*1000
             if total_count > 10:
                 customer_count = customer_bugs_dict.get(month,0)
                 
                 ratio = customer_count / total_count if total_count else 0
-                ratios.append({
-                    "time": int(month.timestamp()*1000),
-                    "ratio":ratio
-                })
+                
+                if month not in ratios:
+                    ratios[month]= {}
+                ratios[month]['Total'] = ratio
 
+        for month,product,count in bugs_by_product:
+            month= month.timestamp()*1000
+            if count> 10:
+                product = product if product else 'Unknown'
+                customer_count = customer_bugs_dict_by_product.get(f"{month}{product}",0)
 
-        return ratios
+                ratio = customer_count / count if total_count else 0
+
+                if month not in ratios:
+                    ratios[month] = {}
+
+                ratios[month][product]= ratio
+      
+        results = [{'date': key, 'values': value} for key, value in ratios.items()]
+        return results
