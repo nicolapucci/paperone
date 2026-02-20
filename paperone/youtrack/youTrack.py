@@ -102,7 +102,6 @@ def get_activity_items(fields,query,categories):
             response.raise_for_status()
 
             activity_item_data = response.json()
-            logger.debug(f"received{activity_item_data}")
 
             refetch = False if len(activity_item_data)<top else True #if youtrack returns less items than requested it means he don-t have any more items to return
             
