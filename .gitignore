@@ -4,3 +4,4 @@
 **/issue.json
 **/**.csv
 **/logs/**
+**/grafana.json

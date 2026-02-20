@@ -25,6 +25,8 @@ class Issue(Base):
 
     custom_fields:Mapped[list["IssueCustomField"]] = relationship(back_populates="issue",cascade="all, delete-orphan")
 
+    parent_id: Mapped[str] = mapped_column(nullable=True)
+
     created: Mapped[datetime.datetime]
     updated: Mapped[datetime.datetime]
 
@@ -41,8 +43,6 @@ class IssueCustomField(Base):
     issue:Mapped["Issue"] = relationship(back_populates="custom_fields")
 
     value:Mapped["IssueCustomFieldValue"] = relationship(back_populates="field",cascade="all, delete-orphan")
-
-    changes: Mapped[list["IssueCustomFieldChange"]] = relationship(back_populates="field",cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("issue_id", "name"),
@@ -111,9 +111,8 @@ class IssueCustomFieldChange(Base):
 
     id:Mapped[int] = mapped_column(primary_key=True)
 
-    field_id: Mapped[int] = mapped_column(ForeignKey("issueCustomField.id"),nullable=False)
-    field: Mapped["IssueCustomField"] = relationship(back_populates="changes")
-
+    field_name: Mapped[str] = mapped_column(nullable=False)
+    issue_id_readable: Mapped[str] = mapped_column(nullable=False)
 
     old_value_string:Mapped[str] = mapped_column(nullable=True)
     new_value_string:Mapped[str] = mapped_column(nullable=True)
@@ -126,5 +125,7 @@ class IssueCustomFieldChange(Base):
 
     timestamp:Mapped[datetime.datetime]
 
-
+    __table_args__ = (
+        UniqueConstraint("field_name","issue_id_readable","timestamp"),
+    )
 

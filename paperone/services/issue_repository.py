@@ -7,6 +7,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.dialects.postgresql import insert
 
+import re
 
 from services.postgres_engine import engine
 from models.issues import (
@@ -15,7 +16,8 @@ from models.issues import (
     StringFieldValue,
     NumberFieldValue,
     DateFieldValue,
-    IssueCustomFieldValue
+    IssueCustomFieldValue,
+    IssueCustomFieldChange
 )
 from datetime import (
     datetime,
@@ -27,6 +29,16 @@ BATCH_SIZE = 1000
 
 def convert_to_timestamp(date):
     return datetime.fromtimestamp(date/1000,tz=timezone.utc)
+
+def extract_field_name(targetMember:str):
+
+    match = re.search(r'__CUSTOM_FIELD__(\w+)_\d+', targetMember)
+
+    if match:
+        field_name = match.group(1)
+        return field_name
+    else:
+        return None
 
 class IssueRepository:
 
@@ -106,14 +118,15 @@ class IssueRepository:
 
         with Session(engine) as session:
             max_updated = session.execute(stmt).scalar_one_or_none()
-        return max_updated.strftime('%Y-%m')
+        return max_updated.strftime('%Y-%m') if max_updated else None
 
     @staticmethod
     def upsert_issues(issue_data:list):
 
         with Session(engine) as session:
             try:
-                logger.info(f"Received {len(issue_data)} issues")
+                len_data = len(issue_data) if issue_data else 0
+                logger.info(f"Received {len_data} issues")
                 issue_rows = []
                 issueCustomField_rows = []
                 issueCustomFieldValues_rows = []
@@ -121,12 +134,15 @@ class IssueRepository:
                 for data in issue_data:
                     created=convert_to_timestamp(data.get('created'))
                     updated=convert_to_timestamp(data.get('updated'))
+                    parent = data.get('parent')
+                    parent_issues= parent.get('issues',None) if parent else None
                     issue = {
                         "youtrack_id":data.get('id'),
                         "id_readable":data.get('idReadable'),
                         "summary":data.get('summary'),
                         "created":created,
                         "updated":updated,
+                        "parent_id":parent_issues[0].get('idReadable') if parent_issues else None
                     }
                     issue_rows.append(issue)
                     for field in data.get('customFields'):
@@ -157,6 +173,7 @@ class IssueRepository:
                         set_={
                             "summary":insert(Issue).excluded.summary,
                             "updated":insert(Issue).excluded.updated,
+                            "parent_id":insert(Issue).excluded.parent_id,
                         }
                     )
                     .returning(Issue.id, Issue.youtrack_id)
@@ -229,6 +246,57 @@ class IssueRepository:
                 raise
 
            
+    @staticmethod
+    def upsert_activity_items(activity_item_data:list):
+        with Session(engine) as session:
+            try:
+                logger.info(f"received {len(activity_item_data)} activity items...")
+
+                activity_item_rows = []
+
+                for data in activity_item_data:
+                    targetMember = data.get('targetMember')
+
+                    issue = data.get('target')
+                    try:
+                        issue_id_readable = issue.get('idReadable') if issue else None
+                    except Exception:
+                        logger.debug(f"Cannot get idReadable from {data}")
+                        raise
+                    rm = data.get('removed')
+                    rm = rm[0] if isinstance(rm,list) and rm else rm
+                    rm = rm.get('name',None) if isinstance(rm,dict) else rm 
+                    added = data.get('added')
+                    added = added[0] if isinstance(added,list) and added else added
+                    added = added.get('name',None) if isinstance(added,dict) else added
+                    try:
+                        activity_item = {
+                            'field_name':extract_field_name(targetMember),
+                            'issue_id_readable':issue_id_readable,
+                            'old_value_string':rm,
+                            'new_value_string':added,
+                            'timestamp':data.get('timestamp')
+                        }
+                        activity_item_rows.append(activity_item)
+                    except Exception as e:
+                        logger.debug(f"Error while creating activity_item: {targetMember}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
+                        raise
+                stmt = (
+                    insert(IssueCustomFieldChange
+                    ).values(activity_item_rows
+                    ).on_conflict_do_nothing(
+                        index_elements=["field_name","issue_id_readable","timestamp"]
+                    )
+                    .returning(IssueCustomFieldChange.id)
+                )
+                logger.info(f"trying to add {len(activity_item_rows)} activity Items")
+                result = session.execute(stmt).fetchall()
+                session.commit()
+                logger.info(f"added {len(result)} new activity Items")
+            except Exception as e:
+                logger.error(f"Error while upserting data: {e}")
+                session.rollback()
+                raise
 
     @staticmethod
     def count_reported_bugs():
@@ -392,3 +460,9 @@ class IssueRepository:
       
         results = [{'date': key, 'values': value} for key, value in ratios.items()]
         return results
+
+
+
+    #@staticmethod
+    #def okr_4():
+    #select i.id_readable,icfv.value_string from issue as i join issue as p on i.parent_id = p.id_readable join "issueCustomField" as icf on p.id = icf.issue_id join "issueCustomFieldValue" as icfv on icf.id = icfv.custom_field_id where icf.name = 'Fix versions' and i.summary like '(Integration Test Verification)%' group by icfv.value_string;

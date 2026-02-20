@@ -10,6 +10,7 @@ import datetime
 
 
 class Base(DeclarativeBase):
+    __allow_unmapped__ = True 
     type_annotation_map = {
         datetime.datetime: TIMESTAMP(timezone=True),
         int: BIGINT,

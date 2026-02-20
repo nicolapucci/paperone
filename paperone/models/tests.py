@@ -22,6 +22,10 @@ class Product(Base):
     name:Mapped['str']
     version:Mapped['str']
 
+    __table_args__ = (
+        UniqueConstraint("name","version"),
+    )
+    
 class Test(Base):
     __tablename__= 'test'
 
@@ -48,3 +52,6 @@ class TestRun(Base):
 
     status: Mapped[str]
     outcome: Mapped[str]
+    __table_args__ = (
+        UniqueConstraint("test_id","release_id","rc"),
+    )
