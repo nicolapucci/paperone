@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, aliased
 from sqlalchemy.dialects.postgresql import insert
 
 import re
-
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from services.postgres_engine import engine
 from models.issues import (
     Issue,
@@ -109,6 +109,7 @@ class IssueRepository:
                             else:
                                 value = None 
                         if value:
+                            logger.info(f"abt to insert value {value}")
                             session.add(value)
                             session.commit()
                             session.refresh(value)
@@ -197,11 +198,17 @@ class IssueRepository:
                         continue
                     
                     rm = data.get('removed')
-                    rm = ArrayValue(value=[get_value_obj(item) for item in rm])if isinstance(rm,list) else PrimitiveValue(value=get_value_obj(item=rm))
-
-                    added = data.get('added')
-                    added = ArrayValue(value=[get_value_obj(item) for item in added])if isinstance(added,list) else PrimitiveValue(value=get_value_obj(item=added))
+                    rm = ArrayValue(value=[result for item in rm if (result := get_value_obj(item)) is not None])if isinstance(rm,list) else PrimitiveValue(value=get_value_obj(item=rm))
                     
+                    added = data.get('added')
+                    added = ArrayValue(value=[result for item in added if (result := get_value_obj(item)) is not None])if isinstance(added,list) else PrimitiveValue(value=get_value_obj(item=added))
+                    
+                    session.add(added)
+                    session.add(rm)
+                    session.commit()
+                    session.refresh(added)
+                    session.refresh(rm)
+
                     get_custom_field_stmt = (
                         select(icf
                         ).select_from(icf
@@ -215,17 +222,19 @@ class IssueRepository:
 
                     if customField:
                         try:
+                            timestamp = data.get('timestamp')
+                            timestamp = datetime.fromtimestamp(timestamp/1000) if timestamp else None
                             activity_item_rows.append({
                                 'field_id': customField.id,
-                                'issue_id_readable': issue_id_readable,
-                                'old_value': rm if rm else None,
-                                'new_value': added if added else None,
-                                'timestamp': data.get('timestamp')
+                                'old_value_id': rm.id if rm else None,
+                                'new_value_id': added.id if added else None,
+                                'timestamp': timestamp
                             })
                         except Exception as e:
-                            logger.debug(f"Error while creating activity_item: {targetMember}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
+                            logger.debug(f"Error while creating activity_item: {extract_field_name(targetMember)}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
                             raise
-
+                    else:
+                        logger.error(f"Custom field {extract_field_name(targetMember)} of issue {issue_id_readable} not found")
                 added_items = 0
 
                 if activity_item_rows:
@@ -234,7 +243,7 @@ class IssueRepository:
                     stmt_cf_change = pg_insert(IssueCustomFieldChange
                         ).values(activity_item_rows
                         ).on_conflict_do_nothing(
-                        index_elements=["field_id", "issue_id_readable", "timestamp"]
+                        index_elements=["field_id", "timestamp"]
                     ).returning(IssueCustomFieldChange.id)
                     result = session.execute(stmt_cf_change).fetchall()
                     added_items = len(result)

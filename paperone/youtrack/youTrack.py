@@ -25,7 +25,7 @@ youtrack_server_reachable = True
 update_frequency = 24 #h
 
 fields = 'id,idReadable,summary,created,updated,customFields(name,value(name)),parent(issues(idReadable))'
-base_query= 'project: Kalliope Type: Bug'
+base_query= 'summary: (Integration Test Verification)'
 
 activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value),removed(id,idReadable),target(id,idReadable),targetMember'
 activity_item_category = 'CustomFieldCategory'
@@ -139,10 +139,9 @@ async def youTrack_worker():
 
         issues = get_issues(fields=fields,query=query) if youtrack_server_reachable else get_issues_from_json(issue_json_path)
 
-        try:
-            if issues:
-                threading.Thread(target=upsert_issues_thread,args=(issues,)).start()
-            
+        logger.info('abt to upsert')
+        IssueRepository.upsert_issues(issues)
+        try:            
             activity_items_count = 0
             async for chunk in get_activity_items(
                 fields=activity_item_field,
