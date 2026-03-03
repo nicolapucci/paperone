@@ -4,7 +4,8 @@ from sqlalchemy.orm import (
     relationship
 )
 from sqlalchemy import (
-    UniqueConstraint
+    UniqueConstraint,
+    ForeignKey
 )
 import datetime
 
@@ -24,9 +25,7 @@ class Issue(Base):
 
     custom_fields:Mapped[list["IssueCustomField"]] = relationship(back_populates="issue",cascade="all, delete-orphan")
 
-    parent: Mapped["Issue"] = relationship(back_populates="childs")
-
-    childs:Mapped[list["Issue"]] = relationship(back_populates="parent")
+    parent_id: Mapped[int] = mapped_column(nullable=True)
 
     #author: Mapped["User"] = relationship(back_populates="issues")
 
@@ -41,11 +40,20 @@ class IssueCustomField(Base):
 
     name:Mapped[str]
 
+    issue_id: Mapped[int] = mapped_column(ForeignKey('issue.id'))
     issue:Mapped["Issue"] = relationship(back_populates="custom_fields")
 
-    value:Mapped["FieldValue"] = relationship(back_populates="value",cascade="all, delete-orphan")
+    value_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
+    value:Mapped["FieldValue"] = relationship(
+        single_parent=True,
+        cascade="all, delete-orphan"
+        )
 
-    changes: Mapped[list["IssueCustomFieldChange"]] = relationship(back_populates="field",cascade="all, delete-orphan")
+    changes: Mapped[list["IssueCustomFieldChange"]] = relationship(
+        back_populates="field",
+        cascade="all, delete-orphan",
+        single_parent=True
+        )
 
     __table_args__ = (
         UniqueConstraint("issue_id", "name"),
@@ -57,17 +65,29 @@ class IssueCustomFieldChange(Base):
 
     id:Mapped[int] = mapped_column(primary_key=True)
 
+    field_id: Mapped[int] = mapped_column(ForeignKey('issueCustomField.id'))
     field: Mapped["IssueCustomField"] = relationship(back_populates="changes")
+    
+    old_value_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
+    old_value:Mapped["FieldValue"] = relationship(
+        single_parent=True,
+        foreign_keys=[old_value_id],
+        cascade="all, delete-orphan"
+    )
 
-    old_value:Mapped["FieldValue"] = relationship(back_populates="value",nullable=True)
-    new_value:Mapped["FieldValue"] = relationship(back_populates="value",nullable=True)
+    new_value_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
+    new_value:Mapped["FieldValue"] = relationship(
+        single_parent=True,
+        foreign_keys=[new_value_id],
+        cascade="all, delete-orphan"
+    )
 
     timestamp:Mapped[datetime.datetime]
 
     #author: Mapped["User"] = relationship(back_populates="actions")
-    
+
     __table_args__ = (
-        UniqueConstraint("field","timestamp"),
+        UniqueConstraint("field_id","timestamp"),
     )
 
 

@@ -21,7 +21,7 @@ services:
         test: ["CMD-SHELL","pg_isready -U ${DB_USER} -d ${DB_NAME}"]
         interval: 5s
         timeout: 5s
-        retries: 5
+        retries: 10
         start_period: 10s
     
 
@@ -30,7 +30,7 @@ services:
     container_name: grafana
     restart: unless-stopped
     environment:
-      - GL_LOG_LEVEL=debug
+      - GL_LOG_LEVEL=warning
     ports:
       - '3000:3000'
     volumes:

@@ -1,7 +1,9 @@
 import os
 import requests
+import aiohttp
 from datetime import datetime,timezone
 import asyncio
+import threading
 
 from services.issue_repository import IssueRepository
 
@@ -17,6 +19,8 @@ from services.logger import logger
 YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN')
 YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 
+issue_json_path = './issue.json'
+
 youtrack_server_reachable = True
 update_frequency = 24 #h
 
@@ -29,6 +33,9 @@ activity_item_category = 'CustomFieldCategory'
 def update_query(last_update):
     return f"{base_query} updated: {last_update} .. Now" #to check the type of the timestamp accepted by youtrack
 
+def get_issues_from_json(filepath):
+    with open(filepath) as p:
+        return json.load(p)
 
 def get_issues(fields,query):
 
@@ -72,49 +79,51 @@ def get_issues(fields,query):
             refetch = False
     return issues
 
+def upsert_issues_thread(issues):
+    IssueRepository.upsert_issues(issue_data=issues)
 
-def get_activity_items(fields,query,categories):
+def upsert_activity_items_thread(chunk):
+    IssueRepository.upsert_activity_items(activity_item_data=chunk)
+
+async def get_activity_items(fields,query,categories):
 
     top = 1000
     skip = 0
 
     refetch = True
 
-    activity_items = []
-
     while refetch:
         try:
-            response = requests.get(
-                headers={
-                    "Content-Type":"application/json",
-                    "Accept":"application/json",
-                    "Authorization":f"Bearer {YOUTRACK_TOKEN}"
-                },
-                params={
-                    "categories":categories,
-                    "fields":fields,
-                    "issueQuery":query,
-                    "$top":top,
-                    "$skip":skip,
-                },
-                url= f"{YOUTRACK_URL}/api/activities"
-            )
-            response.raise_for_status()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    headers={
+                        "Content-Type":"application/json",
+                        "Accept":"application/json",
+                        "Authorization":f"Bearer {YOUTRACK_TOKEN}"
+                    },
+                    params={
+                        "categories":categories,
+                        "fields":fields,
+                        "issueQuery":query,
+                        "$top":top,
+                        "$skip":skip,
+                    },
+                    url= f"{YOUTRACK_URL}/api/activities"
+                ) as response:
 
-            activity_item_data = response.json()
+                    response.raise_for_status()
 
-            refetch = False if len(activity_item_data)<top else True #if youtrack returns less items than requested it means he don-t have any more items to return
-            
-            skip += top
-            newdata = []
-            for activity_item in activity_item_data:
-                newdata.append(activity_item)
+                    activity_item_data = await response.json()
 
-            activity_items.extend(newdata)
+                    refetch = False if len(activity_item_data)<top else True #if youtrack returns less items than requested it means he don-t have any more items to return
+                    
+                    skip += top
+
+                yield activity_item_data
         except Exception as e:
             logger.warning(f"Error fetching data: {e}")
             refetch = False
-    return activity_items
+
 
 
 async def youTrack_worker():
@@ -126,40 +135,25 @@ async def youTrack_worker():
 
         last_sync = IssueRepository.get_max_updated_issue() if not last_sync else last_sync
             
-        if youtrack_server_reachable:
+        query=update_query(last_sync) if last_sync else base_query
 
-            query=update_query(last_sync) if last_sync else base_query
+        issues = get_issues(fields=fields,query=query) if youtrack_server_reachable else get_issues_from_json(issue_json_path)
 
-            logger.info("Youtrack Server is reachable, fetching data...")
-            issues = get_issues(
-                fields=fields,
-                query=query
-                )
-
-            activity_items = get_activity_items(
+        try:
+            if issues:
+                threading.Thread(target=upsert_issues_thread,args=(issues,)).start()
+            
+            activity_items_count = 0
+            async for chunk in get_activity_items(
                 fields=activity_item_field,
                 categories=activity_item_category,
                 query=query
-                )
-        
-        else:
-            logger.info("Youtrack Server is unreachable, loading data from local file...")
-            try:
-                with open('./issue.json') as p:
-                    issues = json.load(p)
-            except Exception as e:
-                logger.error(f"Error loading local file.")
-                issues = []
-        try:
-
-            if issues:
-                IssueRepository.upsert_issues(issue_data=issues)
-            if activity_items:
-                IssueRepository.upsert_activity_items(activity_item_data=activity_items)
+                ):
+                threading.Thread(target=upsert_activity_items_thread,args=(chunk,)).start()
+                activity_items_count+=len(chunk)
 
             upserted_issues = len(issues) if issues else 0
-            upserted_activity_items = len(activity_items) if activity_items else 0
-            log_string = f"Added {upserted_issues} Issues and {upserted_activity_items} activity Items" if issues or activity_items else "Nothing to add"
+            log_string = f"Added {upserted_issues} Issues and {activity_items_count} activity Items" if issues or activity_items else "Nothing to add"
 
             logger.info(log_string)
 

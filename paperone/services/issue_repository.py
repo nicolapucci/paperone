@@ -13,12 +13,17 @@ from services.postgres_engine import engine
 from models.issues import (
     Issue,
     IssueCustomField,
-    StringFieldValue,
-    NumberFieldValue,
-    DateFieldValue,
-    IssueCustomFieldValue,
     IssueCustomFieldChange
 )
+
+from models.value import (
+    PrimitiveValue,
+    ArrayValue,
+    DateValue,
+    NumberValue,
+    StringValue
+)
+
 from datetime import (
     datetime,
     timezone
@@ -40,77 +45,17 @@ def extract_field_name(targetMember:str):
     else:
         return None
 
+def get_value_obj(item):
+    item = item if not isinstance(item,dict) else item.get('name',None)
+    if isinstance(item,str):
+        return StringValue(value=item)
+    elif isinstance(item,int):
+        return NumberValue(value=item)
+    elif isinstance(item,datetime):
+        return DateValue(value=item)#check if it's correct
+    return None
+
 class IssueRepository:
-
-    @staticmethod
-    def bulk_create_issue_with_fields(issues_data:dict):#non in uso
-
-        with Session(engine) as session:
-            try:
-                batch = []
-                for issue_data in issues_data:
-                    
-
-                    issue = Issue(
-                        youtrack_id=issue_data.get('id'),
-                        id_readable=issue_data.get('idReadable'),
-                        summary=issue_data.get('summary'),
-                        created=convert_to_timestamp(issue_data.get('created')),
-                        updated=convert_to_timestamp(issue_data.get('updated')),
-                    )
-                    batch.append(issue)
-
-
-                    for field in issue_data.get('customFields', []):
-
-                        name = field.get('name')
-                        raw_value = field.get('value')
-                        raw_value = raw_value.get('name') if isinstance(raw_value,dict) else raw_value
-                        raw_value = raw_value if not isinstance(raw_value,list) else None
-                        field_type = field.get('type', 'string')
-
-                        custom_field = IssueCustomField(
-                            issue=issue,
-                            name=name
-                        )
-
-                        batch.append(custom_field)
-
-                        if field_type == 'string':
-                            custom_field_value = StringFieldValue(
-                                field=custom_field
-                            )
-                            custom_field_value.value = raw_value
-
-                        elif field_type == 'number':
-                            custom_field_value = NumberFieldValue(
-                                field=custom_field
-                            )
-                            custom_field_value.value = int(raw_value) if raw_value else None
-
-                        elif field_type == 'date':
-                            custom_field_value = DateFieldValue(
-                                field=custom_field
-                            )
-                            custom_field_value.value = raw_value
-
-                        else:
-                            continue
-
-                        batch.append(custom_field_value)
-                        if len(batch)> BATCH_SIZE:
-                            session.add_all(batch)
-                            session.commit()
-                            session.expunge_all()
-                            batch = []
-                if batch:
-                    session.add_all(batch)
-                    session.commit()
-                    session.expunge_all()   
-
-            except Exception:
-                session.rollback()
-                raise
 
     @staticmethod
     def get_max_updated_issue():
@@ -122,132 +67,119 @@ class IssueRepository:
 
     @staticmethod
     def upsert_issues(issue_data:list):
-
         with Session(engine) as session:
             try:
                 len_data = len(issue_data) if issue_data else 0
-                logger.info(f"Received {len_data} issues")
-                issue_rows = []
-                issueCustomField_rows = []
-                issueCustomFieldValues_rows = []
-
+                logger.info(f"Received {len_data} issues")                
+                issues = []
                 for data in issue_data:
                     created=convert_to_timestamp(data.get('created'))
                     updated=convert_to_timestamp(data.get('updated'))
                     parent = data.get('parent')
                     parent_issues= parent.get('issues',None) if parent else None
-                    issue = {
-                        "youtrack_id":data.get('id'),
-                        "id_readable":data.get('idReadable'),
-                        "summary":data.get('summary'),
-                        "created":created,
-                        "updated":updated,
-                        "parent_id":parent_issues[0].get('idReadable') if parent_issues else None
-                    }
-                    issue_rows.append(issue)
-                    for field in data.get('customFields'):
+                    
+                    parent_issue_id = None
+                    if parent_issues:
+                        if isinstance(parent_issues, list) and parent_issues:
+                            parent_issue_id = parent_issues[0].get('id', None)
+                        elif isinstance(parent_issues, dict):
+                            parent_issue_id = parent_issues.get('id', None)
+                    
+                    issue = Issue(
+                            youtrack_id=data.get('id'),
+                            id_readable=data.get('idReadable'),
+                            summary=data.get('summary'),
+                            created=created,
+                            updated=updated,
+                            parent_id=parent_issue_id
+                        )
+
+                    for field in data.get('customFields',[]):
 
                         name = field.get('name')
-                        issueCustomField_rows.append({
-                            "issue_id":data.get('id'),
-                            "name":name,
-                        })
 
                         value = field.get('value')
-                        value = value if not isinstance(value,list) else value[0] if value else None#tmp incomplete fix
-                        value = value if not isinstance(value,dict) else value.get('name')
                         
-                        issueCustomFieldValues_rows.append({
-                            "custom_field_id":f"{name}{data.get('id')}",#this is the same value as issueCustomField issue_id
-                            "value_string":value,
-                            "type":"string",
-                        })
+                        if isinstance(value,list):
+                            value = ArrayValue(value=[result for item in value if (result := get_value_obj(item)) is not None])
+                        else:
+                            result = get_value_obj(value)
+                            if result is not None:
+                                value = PrimitiveValue(value=result)
+                            else:
+                                value = None 
+                        if value:
+                            session.add(value)
+                            session.commit()
+                            session.refresh(value)
+                            issueCustomField = IssueCustomField(
+                                name=name,
+                                value=value,
+                                issue=issue
+                            )
+                            issue.custom_fields.append(issueCustomField)
+                    
+                    issues.append(issue)
+                logger.info(f"Upserting {len(issues)} Issues...")
 
-
-                logger.info(f"Upserting {len(issue_rows)} Issues...")
                 stmt = (
-                    insert(Issue
-                    ).values(issue_rows
+                    insert(Issue)
+                    .values([{
+                        'youtrack_id': issue.youtrack_id,
+                        'id_readable': issue.id_readable,
+                        'summary': issue.summary,
+                        'created': issue.created,
+                        'updated': issue.updated,
+                        'parent_id': issue.parent_id
+                    } for issue in issues]
                     ).on_conflict_do_update(
                         index_elements=["youtrack_id"],
                         set_={
-                            "summary":insert(Issue).excluded.summary,
-                            "updated":insert(Issue).excluded.updated,
-                            "parent_id":insert(Issue).excluded.parent_id,
+                            "summary": insert(Issue).excluded.summary,
+                            "updated": insert(Issue).excluded.updated,
+                            "parent_id": insert(Issue).excluded.parent_id,
                         }
                     )
-                    .returning(Issue.id, Issue.youtrack_id)
                 )
-
-                result = session.execute(stmt).fetchall()
-
-                affetcted_rows = len(result)
-                logger.info(f"returned {len(result)} rows")
-
-                issue_id_map = {row.youtrack_id:row.id for row in result}
-                issue_youtrack_id_map = {row.id:row.youtrack_id for row in result}
-
-                for row in issueCustomField_rows:
-                    row['issue_id'] = issue_id_map[row['issue_id']]
-
-                logger.info(f"Upserting {len(issueCustomField_rows)} IssueCustomFields...")                
-        
-                stmt = (
-                    insert(IssueCustomField
-                    ).values(issueCustomField_rows
-                    ).on_conflict_do_update(
-                        index_elements=["issue_id","name"],
-                        set_={
-                            "name":insert(IssueCustomField).excluded.name
-                        }
-                    ).returning(
-                        IssueCustomField.id,
-                        IssueCustomField.name,
-                        IssueCustomField.issue_id   ,
-                    )
-                )
-
-                result = session.execute(stmt).fetchall()
-                affetcted_rows += len(result)
-                logger.info(f"returned {len(result)} rows")
-
-                issueCustomField_id_map = {f"{row.name}{issue_youtrack_id_map[row.issue_id]}":row.id for row in result}#here i create the map with the same structure as the issuecustomFieldValue_rows' items
-                
-                for row in issueCustomFieldValues_rows:
-                    row['custom_field_id'] = issueCustomField_id_map[row['custom_field_id']]
-                
-                logger.info(f"Upserting {len(issueCustomFieldValues_rows)} IssueCustomFieldValues...")
-                stmt = (
-                    insert(StringFieldValue
-                    ).values(issueCustomFieldValues_rows
-                    ).on_conflict_do_update(
-                        index_elements=['custom_field_id'],
-                        set_={
-                            "value_string":insert(IssueCustomFieldValue).excluded.value_string
-                        }
-                    ).returning(
-                        IssueCustomFieldValue.id,
-                    )
-                )
-
-                result = session.execute(stmt).fetchall()
-                affetcted_rows += len(result)
-                logger.info(f"returned {len(result)} rows")
-
+                session.execute(stmt)
                 session.commit()
+                for issue in issues:
+                    for custom_field in issue.custom_fields:
+                        value_id = custom_field.value.id if custom_field.value else None
 
-                logger.info(f"Upsert completed, affected: {affetcted_rows} rows")
+                        issue_id_stmt = (
+                            select(Issue.id
+                            ).select_from(Issue
+                            ).where(
+                                Issue.id_readable == issue.id_readable
+                            )
+                        )
+                        issue_id = session.execute(issue_id_stmt).scalar_one_or_none()
 
-
-
+                        stmt_cf = (
+                            insert(IssueCustomField)
+                            .values({
+                                'name': custom_field.name,
+                                'value_id': value_id,
+                                'issue_id': issue_id
+                            }).on_conflict_do_update(
+                                index_elements=["issue_id", "name"],
+                                set_={
+                                    "value_id": insert(IssueCustomField).excluded.value_id
+                                }
+                            )
+                        )
+                        session.execute(stmt_cf)
+                session.commit()
             except Exception as e:
-                logger.error(f"Error while upserting data: {e}")
+                logger.error(f"Error while upserting issues with custom fields: {e}")
                 session.rollback()
                 raise
 
-           
     @staticmethod
     def upsert_activity_items(activity_item_data:list):
+        icf = aliased(IssueCustomField)
+
         with Session(engine) as session:
             try:
                 logger.info(f"received {len(activity_item_data)} activity items...")
@@ -262,37 +194,54 @@ class IssueRepository:
                         issue_id_readable = issue.get('idReadable') if issue else None
                     except Exception:
                         logger.debug(f"Cannot get idReadable from {data}")
-                        raise
+                        continue
+                    
                     rm = data.get('removed')
-                    rm = rm[0] if isinstance(rm,list) and rm else rm
-                    rm = rm.get('name',None) if isinstance(rm,dict) else rm 
+                    rm = ArrayValue(value=[get_value_obj(item) for item in rm])if isinstance(rm,list) else PrimitiveValue(value=get_value_obj(item=rm))
+
                     added = data.get('added')
-                    added = added[0] if isinstance(added,list) and added else added
-                    added = added.get('name',None) if isinstance(added,dict) else added
-                    try:
-                        activity_item = {
-                            'field_name':extract_field_name(targetMember),
-                            'issue_id_readable':issue_id_readable,
-                            'old_value_string':rm,
-                            'new_value_string':added,
-                            'timestamp':data.get('timestamp')
-                        }
-                        activity_item_rows.append(activity_item)
-                    except Exception as e:
-                        logger.debug(f"Error while creating activity_item: {targetMember}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
-                        raise
-                stmt = (
-                    insert(IssueCustomFieldChange
-                    ).values(activity_item_rows
-                    ).on_conflict_do_nothing(
-                        index_elements=["field_name","issue_id_readable","timestamp"]
+                    added = ArrayValue(value=[get_value_obj(item) for item in added])if isinstance(added,list) else PrimitiveValue(value=get_value_obj(item=added))
+                    
+                    get_custom_field_stmt = (
+                        select(icf
+                        ).select_from(icf
+                        ).join(Issue, Issue.id == icf.issue_id
+                        ).where(
+                            icf.name==extract_field_name(targetMember),
+                            Issue.id_readable==issue_id_readable
+                            )
                     )
-                    .returning(IssueCustomFieldChange.id)
-                )
-                logger.info(f"trying to add {len(activity_item_rows)} activity Items")
-                result = session.execute(stmt).fetchall()
-                session.commit()
-                logger.info(f"added {len(result)} new activity Items")
+                    customField = session.execute(get_custom_field_stmt).scalar_one_or_none()
+
+                    if customField:
+                        try:
+                            activity_item_rows.append({
+                                'field_id': customField.id,
+                                'issue_id_readable': issue_id_readable,
+                                'old_value': rm if rm else None,
+                                'new_value': added if added else None,
+                                'timestamp': data.get('timestamp')
+                            })
+                        except Exception as e:
+                            logger.debug(f"Error while creating activity_item: {targetMember}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
+                            raise
+
+                added_items = 0
+
+                if activity_item_rows:
+                    logger.info(f"trying to add {len(activity_item_rows)} activity Items")
+    
+                    stmt_cf_change = pg_insert(IssueCustomFieldChange
+                        ).values(activity_item_rows
+                        ).on_conflict_do_nothing(
+                        index_elements=["field_id", "issue_id_readable", "timestamp"]
+                    ).returning(IssueCustomFieldChange.id)
+                    result = session.execute(stmt_cf_change).fetchall()
+                    added_items = len(result)
+
+                session.commit()    
+                logger.info(f"added {added_items} new activity Items")
+            
             except Exception as e:
                 logger.error(f"Error while upserting data: {e}")
                 session.rollback()
@@ -348,7 +297,6 @@ class IssueRepository:
             bugs = session.execute(bugs_stmt).all()
         
         return customer_reported_bugs,bugs
-
 
     @staticmethod
     def count_reported_bugs_group_by_product():
@@ -406,8 +354,6 @@ class IssueRepository:
         
         return customer_reported_bugs,bugs
 
-
-
     @staticmethod
     def defect_rate():
         (customer_reported_bugs,bugs) = IssueRepository.count_reported_bugs()
@@ -460,9 +406,3 @@ class IssueRepository:
       
         results = [{'date': key, 'values': value} for key, value in ratios.items()]
         return results
-
-
-
-    #@staticmethod
-    #def okr_4():
-    #select i.id_readable,icfv.value_string from issue as i join issue as p on i.parent_id = p.id_readable join "issueCustomField" as icf on p.id = icf.issue_id join "issueCustomFieldValue" as icfv on icf.id = icfv.custom_field_id where icf.name = 'Fix versions' and i.summary like '(Integration Test Verification)%' group by icfv.value_string;
