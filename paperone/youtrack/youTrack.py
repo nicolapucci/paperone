@@ -16,7 +16,7 @@ import json
 from services.logger import logger
 
 
-YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN')
+YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN') 
 YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 
 issue_json_path = './issue.json'
@@ -25,8 +25,10 @@ youtrack_server_reachable = True
 update_frequency = 24 #h
 
 fields = 'id,idReadable,summary,created,updated,customFields(name,value(name)),parent(issues(idReadable))'
-base_query= 'summary: (Integration Test Verification)'
-
+#base_query= 'project: Kalliope'
+#base_query= 'summary: "(Integration Test Verification)"'
+base_query= 'project: Kalliope Type: Bug'
+#base_query = 'project: Kalliope Type: Bug Assignee: TCoE Stage: Done State: Verified'
 activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value),removed(id,idReadable),target(id,idReadable),targetMember'
 activity_item_category = 'CustomFieldCategory'
 
@@ -77,6 +79,7 @@ def get_issues(fields,query):
         except Exception as e:
             logger.warning(f"Error fetching data: {e}")
             refetch = False
+
     return issues
 
 def upsert_issues_thread(issues):

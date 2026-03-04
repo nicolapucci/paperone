@@ -25,7 +25,7 @@ class Issue(Base):
 
     custom_fields:Mapped[list["IssueCustomField"]] = relationship(back_populates="issue",cascade="all, delete-orphan")
 
-    parent_id: Mapped[int] = mapped_column(nullable=True)
+    parent_id: Mapped[str] = mapped_column(nullable=True)
 
     #author: Mapped["User"] = relationship(back_populates="issues")
 

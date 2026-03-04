@@ -15,7 +15,7 @@ Base.metadata.create_all(engine)
 @app.on_event("startup")
 async def startup_event():
     subprocess.Popen(["python", "-m", "youtrack.youTrack"])
-    TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
+#    TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
 
 @app.get('/defect-rate')
 def defect_rate():
@@ -24,6 +24,10 @@ def defect_rate():
 @app.get('/test-over-fte')
 def fte():
     return TestRepository.test_over_fte()
+
+@app.get('/validation-duration')
+def validation_duration():
+    return IssueRepository.average_validation_duration()
 
 if __name__ == '__main__':
     uvicorn.run(app,host='0.0.0.0',port=8000)

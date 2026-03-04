@@ -258,7 +258,7 @@ class TestRepository:
         )
 
         automated_tests_stmt = (
-            select(Product.name,Product.version,func.count().label("count")
+            select(Product.name,Product.version,func.count().label("automated_count")
             ).select_from(Product
             ).join(TestRun, Product.id == TestRun.release_id
             ).join(Test, TestRun.test_id == Test.id
@@ -267,15 +267,32 @@ class TestRepository:
             ).order_by(Product.version)
         )
 
+        executed_tests = executed_tests_stmt.alias('executed_tests')
+        automated_tests = automated_tests_stmt.alias('automated_tests')
+
+        stmt = select(
+            executed_tests.c.name,
+            executed_tests.c.version,
+            executed_tests.c.count,
+            automated_tests.c.automated_count
+        ).select_from(executed_tests
+        ).join(
+            automated_tests, 
+            (executed_tests.c.name == automated_tests.c.name)&
+            (executed_tests.c.version == automated_tests.c.version)
+        )
+
         with Session(engine) as session:
             result = session.execute(stmt).fetchall()
 
         res = {}
-        for name, version, count in result:
+        for name, version, count, automated_count in result:
             if not version in res:
                 res[version] = []
             res[version].append({
                 'name':name,
-                'count':count / FTE
+                'count':count / FTE,
+                'automated_count':automated_count/count
                 })
-        return [{'version':version,'product':value['name'],'count':value['count']} for version,items in res.items() for value in items]
+
+        return [{'version':version,'product':value['name'],'count':value['count'],'automated_count':value['automated_count']} for version,items in res.items() for value in items]
