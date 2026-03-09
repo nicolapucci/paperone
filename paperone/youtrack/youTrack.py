@@ -4,6 +4,7 @@ import aiohttp
 from datetime import datetime,timezone
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from services.issue_repository import IssueRepository
 
@@ -24,10 +25,10 @@ issue_json_path = './issue.json'
 youtrack_server_reachable = True
 update_frequency = 24 #h
 
-fields = 'id,idReadable,summary,created,updated,customFields(name,value(name)),parent(issues(idReadable))'
-#base_query= 'project: Kalliope'
+fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
+base_query= 'project: Kalliope'
 #base_query= 'summary: "(Integration Test Verification)"'
-base_query= 'project: Kalliope Type: Bug'
+#base_query= 'project: Kalliope Type: Bug'
 #base_query = 'project: Kalliope Type: Bug Assignee: TCoE Stage: Done State: Verified'
 activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value),removed(id,idReadable),target(id,idReadable),targetMember'
 activity_item_category = 'CustomFieldCategory'
@@ -90,7 +91,7 @@ def upsert_activity_items_thread(chunk):
 
 async def get_activity_items(fields,query,categories):
 
-    top = 1000
+    top = 3000
     skip = 0
 
     refetch = True
@@ -127,6 +128,27 @@ async def get_activity_items(fields,query,categories):
             logger.warning(f"Error fetching data: {e}")
             refetch = False
 
+async def process_activity_items(executor, query):
+    batch = []
+    activity_items_count = 0
+    tasks = []
+    loop = asyncio.get_event_loop()
+
+    async for chunk in get_activity_items(fields=activity_item_field, categories=activity_item_category, query=query):
+        batch.extend(chunk)
+
+        if len(batch) >= 6000:
+            tasks.append(loop.run_in_executor(executor, upsert_activity_items_thread, batch.copy()))
+            activity_items_count += len(batch)
+            batch = []
+
+    if batch:
+        tasks.append(loop.run_in_executor(executor, upsert_activity_items_thread, batch))
+        activity_items_count += len(batch)
+
+    await asyncio.gather(*tasks)
+
+    return activity_items_count
 
 
 async def youTrack_worker():
@@ -146,13 +168,11 @@ async def youTrack_worker():
         IssueRepository.upsert_issues(issues)
         try:            
             activity_items_count = 0
-            async for chunk in get_activity_items(
-                fields=activity_item_field,
-                categories=activity_item_category,
-                query=query
-                ):
-                threading.Thread(target=upsert_activity_items_thread,args=(chunk,)).start()
-                activity_items_count+=len(chunk)
+
+            # EVALUATE THE BEST WAY TO EXECUTE THE WORKER AS A SEPARATE PROCESS
+            batch = []
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                activity_items_count += await process_activity_items(executor,query)
 
             upserted_issues = len(issues) if issues else 0
             log_string = f"Added {upserted_issues} Issues and {activity_items_count} activity Items" if issues or activity_items else "Nothing to add"

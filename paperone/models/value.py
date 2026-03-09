@@ -22,6 +22,8 @@ class StringValue(Value):
     
     id: Mapped[int] = mapped_column(ForeignKey('values.id'),primary_key=True)
     value: Mapped[str] = mapped_column(String)
+    field:Mapped["FieldValue"] = relationship(back_populates="value")
+    field_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
     
     __mapper_args__ = {
         'polymorphic_identity': 'string'
@@ -33,6 +35,8 @@ class DateValue(Value):
     
     id: Mapped[int] = mapped_column(ForeignKey('values.id'),primary_key=True)
     value: Mapped[datetime.datetime] = mapped_column(DateTime)
+    field:Mapped["FieldValue"] = relationship(back_populates="value")
+    field_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
     
     __mapper_args__ = {
         'polymorphic_identity': 'date'
@@ -44,6 +48,8 @@ class NumberValue(Value):
     
     id: Mapped[int] = mapped_column(ForeignKey('values.id'),primary_key=True)
     value: Mapped[int] = mapped_column(Integer)
+    field:Mapped["FieldValue"] = relationship(back_populates="value")
+    field_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
     
     __mapper_args__ = {
         'polymorphic_identity': 'number'

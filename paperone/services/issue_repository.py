@@ -15,6 +15,7 @@ from models.issues import (
     IssueCustomField,
     IssueCustomFieldChange
 )
+import pytz
 
 from models.value import (
     PrimitiveValue,
@@ -32,6 +33,10 @@ from datetime import (
     timedelta
 )
 from services.logger import logger
+
+from services.product_repository import ProductRepository
+
+utc = pytz.UTC
 
 BATCH_SIZE = 1000
 
@@ -60,6 +65,23 @@ def get_value_obj(item):
         return DateValue(value=item)#check if it's correct
     return None
 
+
+def load_custom_field_mapper(session):
+    stmt = (
+        select(IssueCustomField.id, IssueCustomField.name, Issue.id_readable)
+        .join(Issue, Issue.id == IssueCustomField.issue_id)
+    )
+
+    rows = session.execute(stmt).all()
+
+    mapper = {
+        (row.name, row.id_readable): row.id
+        for row in rows
+    }
+
+    return mapper
+
+
 class IssueRepository:
 
     @staticmethod
@@ -70,6 +92,7 @@ class IssueRepository:
             max_updated = session.execute(stmt).scalar_one_or_none()
         return max_updated.strftime('%Y-%m') if max_updated else None
 
+    # CHECK WHY SOME CUSTOM FIELDS ARE LOST (time_left, spent_time , estimation // prob due to the type of the field)
     @staticmethod
     def upsert_issues(issue_data:list):
         with Session(engine) as session:
@@ -186,6 +209,7 @@ class IssueRepository:
                 session.rollback()
                 raise
 
+    # NEED TO DRASTICALLY REDUCE THE TIME NEEDED TO UPSERT ACTIVITYITEMS
     @staticmethod
     def upsert_activity_items(activity_item_data:list):
         icf = aliased(IssueCustomField)
@@ -195,6 +219,10 @@ class IssueRepository:
                 logger.info(f"received {len(activity_item_data)} activity items...")
 
                 activity_item_rows = []
+
+                values_to_add = []
+
+                custom_field_id_mapper = load_custom_field_mapper(session)
 
                 for data in activity_item_data:
                     targetMember = data.get('targetMember')
@@ -213,43 +241,49 @@ class IssueRepository:
                         added = data.get('added')
                         added = ArrayValue(value=[result for item in added if (result := get_value_obj(item)) is not None])if isinstance(added,list) else PrimitiveValue(value=get_value_obj(item=added))
                         
-                        session.add(added)
-                        session.add(rm)
-                        session.commit()
-                        session.refresh(added)
-                        session.refresh(rm)
+                        if rm:
+                            values_to_add.append(rm)
+                        if added:
+                            values_to_add.append(added)
 
-                        get_custom_field_stmt = (
-                            select(icf
-                            ).select_from(icf
-                            ).join(Issue, Issue.id == icf.issue_id
-                            ).where(
-                                icf.name==extract_field_name(targetMember),
-                                Issue.id_readable==issue_id_readable
-                                )
-                        )
-                        customField = session.execute(get_custom_field_stmt).scalar_one_or_none()
+                        field_name = extract_field_name(targetMember)
+                        customField_id = custom_field_id_mapper.get((field_name,issue_id_readable),None)
 
-                        if customField:
+                        #qui creo l'uuid per rm e/o added (se non sono None)
+
+                        if customField_id:
                             try:
                                 timestamp = data.get('timestamp')
                                 timestamp = datetime.fromtimestamp(timestamp/1000) if timestamp else None
                                 activity_item_rows.append({
-                                    'field_id': customField.id,
-                                    'old_value_id': rm.id if rm else None,
-                                    'new_value_id': added.id if added else None,
+                                    'field_id': customField_id,
+                                    'old_value': rm if rm else None,#qui invece metto direttamente rm.id,added.id o None
+                                    'new_value': added if added else None,
                                     'timestamp': timestamp
                                 })
                             except Exception as e:
-                                logger.error(f"Error while creating activity_item: {extract_field_name(targetMember)}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
+                                logger.error(f"Error while creating activity_item: {field_name}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
                                 raise
-                        else:
-                            logger.warning(f"Custom field {extract_field_name(targetMember)} -- {targetMember} of issue {issue_id_readable} not found")
+                        #else:
+                            #logger.warning(f"Custom field {field_name} -- {targetMember} of issue {issue_id_readable} not found")
+
                 added_items = 0
+
+                session.add_all(values_to_add)
+                session.commit()#rimuovo questo commit
+                for item in values_to_add:#non faccio il
+                    session.refresh(item)
 
                 if activity_item_rows:
                     logger.info(f"trying to add {len(activity_item_rows)} activity Items")
     
+                    activity_item_rows = [{
+                                    'field_id': item['field_id'],
+                                    'old_value_id': item['old_value'].id if item['old_value'] else None,
+                                    'new_value_id': item['new_value'].id if item['new_value'] else None,
+                                    'timestamp': item['timestamp']
+                                } for item in activity_item_rows]
+
                     stmt_cf_change = pg_insert(IssueCustomFieldChange
                         ).values(activity_item_rows
                         ).on_conflict_do_nothing(
@@ -414,8 +448,11 @@ class IssueRepository:
         results = [{'date': key, 'values': value} for key, value in ratios.items()]
         return results
 
+
+
+    # REDUCE QUERY TIME OR SCHEDULE EXECUTION AND CACHE RESULTS
     @staticmethod
-    def average_validation_duration():
+    def validation_stats_old():
 
         string_value = aliased(StringValue)
         string_value1 = aliased(StringValue)
@@ -438,8 +475,7 @@ class IssueRepository:
             )
             .join(IssueCustomField, Issue.id == IssueCustomField.issue_id)
             .join(IssueCustomFieldChange, IssueCustomField.id == IssueCustomFieldChange.field_id)
-            .join(FieldValue, FieldValue.id == IssueCustomFieldChange.new_value_id)
-            .join(Value, Value.field_id == FieldValue.id)
+            .join(Value, Value.field_id == IssueCustomFieldChange.new_value_id)
             .outerjoin(string_value, string_value.id == Value.id)
             .where(
                 Issue.summary.like('(Integration Test Verification)%'),
@@ -526,11 +562,169 @@ class IssueRepository:
         for id_readable,first_assigned_to_TCoE,last_set_as_done,time_difference,fix_version,priority in result:
             response.append({
                 'id_readable':id_readable,
-                #'first_assigned_to_TCoE':first_assigned_to_TCoE,
-                #'last_set_as_done':last_set_as_done,
+                'first_assigned_to_TCoE':first_assigned_to_TCoE,
+                'last_set_as_done':last_set_as_done,
                 'time_spent':time_difference,
                 'fix_version':fix_version,
                 'priority':priority
             })
         return response
 
+
+    @staticmethod
+    def validation_stats():
+
+        # Alias per le tabelle
+        string_value = aliased(StringValue)
+        string_value1 = aliased(StringValue)
+        string_value2 = aliased(StringValue)
+        string_value3 = aliased(StringValue)
+        parent_alias = aliased(Issue)
+        child_alias = aliased(Issue)
+        icf = aliased(IssueCustomField)
+        value = aliased(Value)
+
+        # CTE per i primi assegnamenti (primo timestamp per ogni issue)
+        first_assignments = (
+            select(
+                Issue.id_readable,
+                func.min(IssueCustomFieldChange.timestamp).label('first_assigned_to_TCoE')
+            )
+            .join(IssueCustomField, Issue.id == IssueCustomField.issue_id)
+            .join(IssueCustomFieldChange, IssueCustomField.id == IssueCustomFieldChange.field_id)
+            .join(Value, Value.field_id == IssueCustomFieldChange.new_value_id)
+            .join(string_value, string_value.id == Value.id)
+            .where(
+                Issue.summary.like('(Integration Test Verification)%'),
+                IssueCustomField.name == 'Assignee',
+                string_value.value.in_(TCoE_MEMBERS)
+            )
+            .group_by(Issue.id_readable)  # Raggruppa per id_readable, selezionando il minimo timestamp
+            .cte('first_assignments')
+        )
+
+        # CTE per l'ultimo stato completato (ultimo timestamp per ogni issue)
+        last_completed = (
+            select(
+                Issue.id_readable,
+                func.max(IssueCustomFieldChange.timestamp).label('last_set_as_done')
+            )
+            .join(IssueCustomField, Issue.id == IssueCustomField.issue_id)
+            .join(IssueCustomFieldChange, IssueCustomField.id == IssueCustomFieldChange.field_id)
+            .join(FieldValue, FieldValue.id == IssueCustomFieldChange.new_value_id)
+            .join(Value, Value.field_id == FieldValue.id)
+            .join(string_value1, string_value1.id == Value.id)
+            .where(
+                Issue.summary.like('(Integration Test Verification)%'),
+                IssueCustomField.name == 'Stage',
+                string_value1.value == 'Done'
+            )
+            .group_by(Issue.id_readable)  # Raggruppa per id_readable, selezionando il massimo timestamp
+            .cte('last_completed')
+        )
+
+        # CTE per i fix versioni
+        parent_fix_versions = (
+            select(
+                child_alias.id_readable,
+                icf.name,
+                string_value2.value.label('fix_version')
+            )
+            .join(parent_alias, parent_alias.id_readable == child_alias.parent_id)
+            .join(icf, parent_alias.id == icf.issue_id)
+            .join(value, icf.value_id == value.field_id)
+            .join(string_value2, value.id == string_value2.id)
+            .where(icf.name == 'Fix versions')
+            .cte('parent_fix_versions')
+        )
+
+        # CTE per le priorità
+        priorities = (
+            select(
+                child_alias.id_readable,
+                string_value3.value.label('priority')
+            )
+            .join(icf, child_alias.id == icf.issue_id)
+            .join(value, icf.value_id == value.field_id)
+            .join(string_value3, string_value3.id == value.id)
+            .where(icf.name == 'Priority')
+            .cte('priorities')
+        )
+
+        # Query finale che unisce tutte le CTE
+        stmt = (
+            select(
+                first_assignments.c.id_readable,
+                first_assignments.c.first_assigned_to_TCoE,
+                last_completed.c.last_set_as_done,
+                (last_completed.c.last_set_as_done - first_assignments.c.first_assigned_to_TCoE).label('time_difference'),
+                parent_fix_versions.c.fix_version,
+                priorities.c.priority
+            )
+            .join(last_completed, first_assignments.c.id_readable == last_completed.c.id_readable)
+            .join(child_alias, first_assignments.c.id_readable == child_alias.id_readable)
+            .join(parent_alias, child_alias.parent_id == parent_alias.id_readable)
+            .join(parent_fix_versions, first_assignments.c.id_readable == parent_fix_versions.c.id_readable)
+            .join(priorities, first_assignments.c.id_readable == priorities.c.id_readable)
+            .order_by(first_assignments.c.id_readable)
+        )
+
+        # Esecuzione della query
+        with Session(engine) as session:
+            with session.begin():
+                result = session.execute(stmt).fetchall()
+
+        # Costruzione della risposta
+        response = [
+            {
+                'id_readable': id_readable,
+                'first_assigned_to_TCoE': first_assigned_to_TCoE,
+                'last_set_as_done': last_set_as_done,
+                'time_spent': time_difference,
+                'fix_version': fix_version,
+                'priority': priority
+            }
+            for id_readable, first_assigned_to_TCoE, last_set_as_done, time_difference, fix_version, priority in result
+        ]
+        
+        return response
+    @staticmethod
+    def average_validation_duration():
+
+        release_mapper = ProductRepository.rc0_releases()
+        validation_stats = IssueRepository.validation_stats()
+
+
+        groups = {version: {'general':{'time_spent':timedelta(0),'validation_count':0},'pre':{'time_spent':timedelta(0),'validation_count':0}, 'during':{'time_spent':timedelta(0),'validation_count':0}} for version in release_mapper.keys()}        
+
+        for item in validation_stats:
+            fix_version = item.get('fix_version')
+            done = item.get('last_set_as_done')
+
+            if fix_version in groups.keys():
+                if done.replace(tzinfo=utc) > release_mapper[fix_version].replace(tzinfo=utc):
+                    groups[fix_version]['during']['time_spent'] += item.get('time_spent')
+                    groups[fix_version]['during']['validation_count'] += 1
+                else:
+                    groups[fix_version]['pre']['time_spent'] += item.get('time_spent')
+                    groups[fix_version]['pre']['validation_count'] += 1
+                groups[fix_version]['general']['time_spent'] += item.get('time_spent')
+                groups[fix_version]['general']['validation_count'] += 1
+        
+        for version in groups.values():
+            for key,value in version.items():
+                value['average'] = value['time_spent'] / value['validation_count'] if value['validation_count'] > 0 else 0
+            
+
+        result = []
+
+        for version,values in groups.items():
+            release = release_mapper[version].timestamp() * 1000
+            new_item = {"version":version,'release':release}
+
+            for bucket,value in values.items():
+                new_item[f"count_{bucket}"] = value.get('validation_count',None)
+                new_item[f"avg_{bucket}"] = value.get('average',0)
+            result.append(new_item)
+
+        return result
