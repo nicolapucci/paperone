@@ -1,6 +1,11 @@
 from datetime import datetime
 import pandas as pd
 import re
+import requests
+from bs4 import BeautifulSoup
+
+
+from services.redis_client import get_changelog_releases,set_changelog_releases
 
 tmp_release_mapper = {
     '4.0.0':datetime(2015,11,17),
@@ -166,12 +171,15 @@ build_release_sheet_name = "License_Server"
 changelog_sheet_name = "Changelog"
 time_to_test_release_path = "resources/Modello_TCoE_Report_OKR-2_Iniziativa-Tempo_Test_Release.xlsx"
 
+wiki_changelog_url = "https://wiki.kalliope.com/it/latest/Changelog.html"
+
 
 class ProductRepository:
-
+    @staticmethod
     def rc0_releases():
         return tmp_release_mapper
 
+    @staticmethod
     def get_tempo_di_esecuzione_medio():
         build_release, changelog = get_time_to_test_release_data()
         
@@ -293,6 +301,46 @@ class ProductRepository:
             "detailed_recap":detailed_stats
         }
 
+    @staticmethod
+    def changelog_releases():
+
+        releases = get_changelog_releases()
+
+        if releases:
+            print('found in redis')
+            return releases
+        
+        response = requests.get(wiki_changelog_url)
+
+        response.raise_for_status()
+
+        html = response.text
+        soup = BeautifulSoup(html,'html.parser')
+
+        versions = {}
+
+        for item in soup.find_all('a', class_='reference internal'):
+            href = item.get('href',None)
+
+            pattern = r'#firmware-(\d+-\d+-\d+)-(\d{1,2})-(\d{1,2})-(\d{4})'
+
+            match = re.search(pattern,href) if href else None
+
+            if match:
+                print(href)
+                version = re.sub(r'-','.',match.group(1))
+                day = int(match.group(2))
+                month = int(match.group(3))
+                year = int(match.group(4))
+
+                date = datetime(year,month,day)
+
+                versions[version] = date
+        
+        set_changelog_releases(versions)
+
+        return versions
+
 
 
 def helper_clean_version(version_str):
@@ -300,7 +348,6 @@ def helper_clean_version(version_str):
         splits = re.split('-', version_str)
         return splits[0].strip()
     return version_str
-
 
 def helper_parse_date(date_str):
     if isinstance(date_str, pd.Timestamp):
@@ -336,3 +383,4 @@ def get_time_to_test_release_data():
     ))
 
     return build_release_dict, changelog_dict
+

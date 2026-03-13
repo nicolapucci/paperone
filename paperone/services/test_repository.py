@@ -7,6 +7,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.dialects.postgresql import insert
 
+from services.product_repository import ProductRepository
 
 from services.postgres_engine import engine
 
@@ -246,6 +247,7 @@ class TestRepository:
            
     @staticmethod
     def test_over_fte():
+        releases = ProductRepository.rc0_releases()
 
         executed_tests_stmt = (
             select(Product.name,Product.version,func.count().label("count")
@@ -295,4 +297,14 @@ class TestRepository:
                 'automated_count':automated_count/count
                 })
 
-        return [{'version':version,'product':value['name'],'count':value['count'],'automated_count':value['automated_count']} for version,items in res.items() for value in items]
+        response = []
+
+        for version,items in res.items():
+            new_item = {'version':version,'release':releases[version]}
+
+            for value in items:
+                new_item[value['name']] = value['count']
+
+            response.append(new_item)
+
+        return response

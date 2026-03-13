@@ -14,8 +14,8 @@ Base.metadata.create_all(engine)
 
 #@app.on_event("startup")
 #async def startup_event():
-#    subprocess.Popen(["python", "-m", "youtrack.youTrack"])
-#    TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
+    #subprocess.Popen(["python", "-m", "youtrack.youTrack"])
+    #TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
 
 @app.get('/defect-rate')
 def defect_rate():
@@ -31,7 +31,15 @@ def validation_duration():
 
 @app.get('/media-mobile')
 def media_mobile():
-    return ProductRepository.get_tempo_di_esecuzione_medio()
-    
+    return ProductRepository.get_tempo_di_esecuzione_medio().get('generic_stats',None)
+
+@app.get('/prova_okr2')
+def prova():
+    return IssueRepository.elaborate_prova().get('okr2',None)
+
+@app.get('/prova_okr4')
+def prova():
+    return IssueRepository.elaborate_prova().get('okr4',None)
+
 if __name__ == '__main__':
     uvicorn.run(app,host='0.0.0.0',port=8000)

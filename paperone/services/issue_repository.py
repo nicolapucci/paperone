@@ -3,20 +3,38 @@ from sqlalchemy import (
     exists,
     and_ ,
     func,
+    case,
+    desc,
+    Integer,
+    literal_column,
+    text
 )
 from sqlalchemy.orm import Session, aliased
+
+from sqlalchemy.sql import over
+from sqlalchemy.sql import func as sqlfunc
+
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 import re
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+import pytz
+
+from datetime import (
+    datetime,
+    timezone,
+    timedelta
+)
+
+from services.logger import logger
 from services.postgres_engine import engine
+from services.product_repository import ProductRepository
+
 from models.issues import (
     Issue,
     IssueCustomField,
     IssueCustomFieldChange
-)
-import pytz
-
+)   
 from models.value import (
     PrimitiveValue,
     ArrayValue,
@@ -27,14 +45,12 @@ from models.value import (
     Value
 )
 
-from datetime import (
-    datetime,
-    timezone,
-    timedelta
+from services.redis_client import(
+    get_prova_data,
+    set_prova_data
 )
-from services.logger import logger
 
-from services.product_repository import ProductRepository
+
 
 utc = pytz.UTC
 
@@ -65,7 +81,6 @@ def get_value_obj(item):
         return DateValue(value=item)#check if it's correct
     return None
 
-
 def load_custom_field_mapper(session):
     stmt = (
         select(IssueCustomField.id, IssueCustomField.name, Issue.id_readable)
@@ -80,7 +95,6 @@ def load_custom_field_mapper(session):
     }
 
     return mapper
-
 
 class IssueRepository:
 
@@ -448,283 +462,190 @@ class IssueRepository:
         results = [{'date': key, 'values': value} for key, value in ratios.items()]
         return results
 
-
-
-    # REDUCE QUERY TIME OR SCHEDULE EXECUTION AND CACHE RESULTS
     @staticmethod
-    def validation_stats_old():
-
-        string_value = aliased(StringValue)
-        string_value1 = aliased(StringValue)
-        string_value2 = aliased(StringValue)
-        string_value3 = aliased(StringValue)
-        parent_alias = aliased(Issue)
-        child_alias = aliased(Issue)
+    def prova_2():
+        
+        i = aliased(Issue)
         icf = aliased(IssueCustomField)
-        value = aliased(Value)
+        icfc = aliased(IssueCustomFieldChange)
+        sv = aliased(StringValue)
 
 
-        first_assignments = (
-            select(
-                Issue.id_readable,
-                IssueCustomFieldChange.timestamp,
-                func.row_number().over(
-                    partition_by=Issue.id_readable,
-                    order_by=IssueCustomFieldChange.timestamp
-                ).label('rn')
+        validation_changes_cte = (
+            select( # prendo solo i campi rilevanti
+                i.parent_id,
+                i.id_readable,
+                icf.name.label('custom_field_name'),
+                icfc.timestamp,
+                sv.value.label('custom_field_value')
             )
-            .join(IssueCustomField, Issue.id == IssueCustomField.issue_id)
-            .join(IssueCustomFieldChange, IssueCustomField.id == IssueCustomFieldChange.field_id)
-            .join(Value, Value.field_id == IssueCustomFieldChange.new_value_id)
-            .outerjoin(string_value, string_value.id == Value.id)
+            .join(icf,i.id == icf.issue_id)
+            .join(icfc,icf.id == icfc.field_id)
+            .join(sv, icfc.new_value_id == sv.field_id)
+            .where(i.summary.like('(Integration Test Verification)%')) # mi interessano solo questi
+        ).cte('validation_changes_cte')
+
+
+        completions_cte = (
+            select(
+                validation_changes_cte.c.parent_id,
+                validation_changes_cte.c.id_readable,
+                validation_changes_cte.c.timestamp,
+                validation_changes_cte.c.custom_field_value
+            )
             .where(
-                Issue.summary.like('(Integration Test Verification)%'),
-                IssueCustomField.name == 'Assignee',
-                string_value.value.in_(TCoE_MEMBERS)
+                validation_changes_cte.c.custom_field_name == 'Stage',
+                validation_changes_cte.c.custom_field_value.in_(['Done','Blocked']) 
             )
-            .cte('first_assignments')
-        )
+        ).cte('completions_cte')
 
-        last_completed = (
+
+        assignements_cte = (
             select(
-                Issue.id_readable,
-                IssueCustomFieldChange.timestamp.label('completed_timestamp'),
-                func.row_number().over(
-                    partition_by=Issue.id_readable,
-                    order_by=IssueCustomFieldChange.timestamp.desc()
-                ).label('sn')
+                validation_changes_cte.c.parent_id,
+                validation_changes_cte.c.id_readable,
+                validation_changes_cte.c.timestamp,
+                validation_changes_cte.c.custom_field_value
             )
-            .join(IssueCustomField, Issue.id == IssueCustomField.issue_id)
-            .join(IssueCustomFieldChange, IssueCustomField.id == IssueCustomFieldChange.field_id)
-            .join(FieldValue, FieldValue.id == IssueCustomFieldChange.new_value_id)
-            .join(Value, Value.field_id == FieldValue.id)
-            .outerjoin(string_value1, string_value1.id == Value.id)
             .where(
-                Issue.summary.like('(Integration Test Verification)%'),
-                IssueCustomField.name == 'Stage',
-                string_value1.value == 'Done'
+                validation_changes_cte.c.custom_field_name == 'Assignee',
+                validation_changes_cte.c.custom_field_value.in_(TCoE_MEMBERS) 
             )
-            .cte('last_completed')
-        )
+        ).cte('assignements_cte')
 
-        parent_fix_versions = (
+        latest_assignment_subq = (
             select(
-                child_alias.id_readable,
-                icf.name,
-                string_value2.value.label('fix_version')
+                assignements_cte.c.id_readable.label('id_readable'),
+                func.max(assignements_cte.c.timestamp).label('latest_timestamp'),
+                completions_cte.c.timestamp
             )
-            .select_from(child_alias)
-            .join(parent_alias, parent_alias.id_readable == child_alias.parent_id)
-            .join(icf, parent_alias.id == icf.issue_id)
-            .join(value, icf.value_id == value.field_id)
-            .join(string_value2, value.id == string_value2.id)
+            .where(
+                assignements_cte.c.id_readable == completions_cte.c.id_readable,
+                assignements_cte.c.timestamp <= completions_cte.c.timestamp
+            )
+            .group_by(assignements_cte.c.id_readable,completions_cte.c.timestamp)
+        ).cte('latest_assignment_subq')
+
+
+        latest_assignment_with_assignee_cte = (
+            select(
+                latest_assignment_subq.c.id_readable,
+                latest_assignment_subq.c.latest_timestamp,
+                latest_assignment_subq.c.timestamp,
+                assignements_cte.c.custom_field_value.label('assignee')
+            )
+            .join(assignements_cte, and_(
+                latest_assignment_subq.c.id_readable == assignements_cte.c.id_readable,
+                latest_assignment_subq.c.latest_timestamp == assignements_cte.c.timestamp
+            ))
+        ).cte('latest_assignment_with_assignee_cte')
+
+
+        working_sessions_cte = (
+            select(
+                completions_cte.c.id_readable,
+                completions_cte.c.parent_id,
+                completions_cte.c.timestamp,
+                completions_cte.c.custom_field_value,
+                latest_assignment_with_assignee_cte.c.assignee,
+                latest_assignment_with_assignee_cte.c.latest_timestamp.label('assigned_ts')
+            )
+            .join(latest_assignment_with_assignee_cte, and_(
+                completions_cte.c.id_readable == latest_assignment_with_assignee_cte.c.id_readable,
+                completions_cte.c.timestamp == latest_assignment_with_assignee_cte.c.timestamp
+            ))
+        ).cte('working_sessions_cte')
+
+        progress_cte = (
+            select(
+                validation_changes_cte.c.id_readable,
+                validation_changes_cte.c.timestamp,
+            )
+            .where(
+                validation_changes_cte.c.custom_field_name == 'Stage',
+                validation_changes_cte.c.custom_field_value == 'In Progress'
+            )
+        ).cte('progress_cte')
+
+        working_sessions_including_is_progress_changes_cte = (
+            select(
+                working_sessions_cte.c.id_readable,
+                working_sessions_cte.c.parent_id,
+                working_sessions_cte.c.timestamp,
+                working_sessions_cte.c.custom_field_value,
+                working_sessions_cte.c.assignee,
+                working_sessions_cte.c.assigned_ts,
+                func.max(progress_cte.c.timestamp)
+            )
+            .join(progress_cte, working_sessions_cte.c.id_readable == progress_cte.c.id_readable)
+            .where(working_sessions_cte.c.timestamp > progress_cte.c.timestamp)
+            .group_by(
+                working_sessions_cte.c.id_readable,
+                working_sessions_cte.c.parent_id,
+                working_sessions_cte.c.timestamp,
+                working_sessions_cte.c.custom_field_value,
+                working_sessions_cte.c.assignee,
+                working_sessions_cte.c.assigned_ts     
+            )
+        ).cte('working_sessions_including_is_progress_changes_cte')
+
+        current_session = aliased(working_sessions_including_is_progress_changes_cte)
+        previous_sessions = aliased(working_sessions_including_is_progress_changes_cte)
+
+        supposed_working_sessions_cte = (
+            select(
+                current_session.c.id_readable,
+                current_session.c.parent_id,
+                current_session.c.timestamp,
+                current_session.c.custom_field_value,
+                current_session.c.assignee,
+                current_session.c.assigned_ts,
+                func.max(previous_sessions.c.timestamp).label('previous_session_stop_ts')
+            )
+            .join(previous_sessions, current_session.c.assignee == previous_sessions.c.assignee)
+            .where(previous_sessions.c.timestamp < current_session.c.timestamp)
+            .group_by(
+                current_session.c.id_readable,
+                current_session.c.parent_id,
+                current_session.c.timestamp,
+                current_session.c.custom_field_value,
+                current_session.c.assignee,
+                current_session.c.assigned_ts,
+            )
+        ).cte('supposed_working_sessions_cte')
+
+
+        parent = (
+            select(
+                i.id_readable,
+                sv.value
+            )
+            .join(icf,i.id == icf.issue_id)
+            .join(sv, icf.value_id == sv.field_id)
             .where(icf.name == 'Fix versions')
-        ).cte('parent_fix_versions')
+        ).cte('parent')
 
-        priorities = (
-            select(
-                child_alias.id_readable,
-                string_value3.value.label('priority')
-            ).select_from(child_alias
-            ).join(icf, child_alias.id==icf.issue_id
-            ).join(value, icf.value_id == value.field_id
-            ).join(string_value3, string_value3.id == value.id
-            ).where(icf.name == 'Priority')
-        ).cte('priorities')
 
         stmt = (
             select(
-                first_assignments.c.id_readable,
-                first_assignments.c.timestamp.label('first_assigned_to_TCoE'),
-                last_completed.c.completed_timestamp.label('last_set_as_done'),
-                (last_completed.c.completed_timestamp - first_assignments.c.timestamp).label('time_difference'),
-                parent_fix_versions.c.fix_version,
-                priorities.c.priority
-            ).join(
-                last_completed,
-                first_assignments.c.id_readable == last_completed.c.id_readable
-            ).join(child_alias, first_assignments.c.id_readable == child_alias.id_readable
-            ).join(parent_alias, child_alias.parent_id == parent_alias.id_readable
-            ).join(parent_fix_versions, first_assignments.c.id_readable==parent_fix_versions.c.id_readable
-            ).join(priorities, first_assignments.c.id_readable==priorities.c.id_readable
-            ).where(
-                first_assignments.c.rn == 1,
-                last_completed.c.sn == 1
+                supposed_working_sessions_cte.c.id_readable,
+                supposed_working_sessions_cte.c.timestamp.label('stop_ts'),
+                supposed_working_sessions_cte.c.assigned_ts,
+                supposed_working_sessions_cte.c.custom_field_value,
+                supposed_working_sessions_cte.c.assignee,
+                supposed_working_sessions_cte.c.previous_session_stop_ts,
+                parent.c.value.label('fix_version'),
             )
-            .order_by(first_assignments.c.id_readable)
+            .join(parent, supposed_working_sessions_cte.c.parent_id == parent.c.id_readable)
+            #.where(supposed_working_sessions_cte.c.assignee == 'Simona rossi' , parent.c.value == '4.19.0')
+
         )
 
         with Session(engine) as session:
-            with session.begin():
-                result = session.execute(stmt).fetchall()
-
-        response = []
-        for id_readable,first_assigned_to_TCoE,last_set_as_done,time_difference,fix_version,priority in result:
-            response.append({
-                'id_readable':id_readable,
-                'first_assigned_to_TCoE':first_assigned_to_TCoE,
-                'last_set_as_done':last_set_as_done,
-                'time_spent':time_difference,
-                'fix_version':fix_version,
-                'priority':priority
-            })
-        return response
-
-
-    @staticmethod
-    def validation_stats():
-
-        # Alias per le tabelle
-        string_value = aliased(StringValue)
-        string_value1 = aliased(StringValue)
-        string_value2 = aliased(StringValue)
-        string_value3 = aliased(StringValue)
-        parent_alias = aliased(Issue)
-        child_alias = aliased(Issue)
-        icf = aliased(IssueCustomField)
-        value = aliased(Value)
-
-        # CTE per i primi assegnamenti (primo timestamp per ogni issue)
-        first_assignments = (
-            select(
-                Issue.id_readable,
-                func.min(IssueCustomFieldChange.timestamp).label('first_assigned_to_TCoE')
-            )
-            .join(IssueCustomField, Issue.id == IssueCustomField.issue_id)
-            .join(IssueCustomFieldChange, IssueCustomField.id == IssueCustomFieldChange.field_id)
-            .join(Value, Value.field_id == IssueCustomFieldChange.new_value_id)
-            .join(string_value, string_value.id == Value.id)
-            .where(
-                Issue.summary.like('(Integration Test Verification)%'),
-                IssueCustomField.name == 'Assignee',
-                string_value.value.in_(TCoE_MEMBERS)
-            )
-            .group_by(Issue.id_readable)  # Raggruppa per id_readable, selezionando il minimo timestamp
-            .cte('first_assignments')
-        )
-
-        # CTE per l'ultimo stato completato (ultimo timestamp per ogni issue)
-        last_completed = (
-            select(
-                Issue.id_readable,
-                func.max(IssueCustomFieldChange.timestamp).label('last_set_as_done')
-            )
-            .join(IssueCustomField, Issue.id == IssueCustomField.issue_id)
-            .join(IssueCustomFieldChange, IssueCustomField.id == IssueCustomFieldChange.field_id)
-            .join(FieldValue, FieldValue.id == IssueCustomFieldChange.new_value_id)
-            .join(Value, Value.field_id == FieldValue.id)
-            .join(string_value1, string_value1.id == Value.id)
-            .where(
-                Issue.summary.like('(Integration Test Verification)%'),
-                IssueCustomField.name == 'Stage',
-                string_value1.value == 'Done'
-            )
-            .group_by(Issue.id_readable)  # Raggruppa per id_readable, selezionando il massimo timestamp
-            .cte('last_completed')
-        )
-
-        # CTE per i fix versioni
-        parent_fix_versions = (
-            select(
-                child_alias.id_readable,
-                icf.name,
-                string_value2.value.label('fix_version')
-            )
-            .join(parent_alias, parent_alias.id_readable == child_alias.parent_id)
-            .join(icf, parent_alias.id == icf.issue_id)
-            .join(value, icf.value_id == value.field_id)
-            .join(string_value2, value.id == string_value2.id)
-            .where(icf.name == 'Fix versions')
-            .cte('parent_fix_versions')
-        )
-
-        # CTE per le priorità
-        priorities = (
-            select(
-                child_alias.id_readable,
-                string_value3.value.label('priority')
-            )
-            .join(icf, child_alias.id == icf.issue_id)
-            .join(value, icf.value_id == value.field_id)
-            .join(string_value3, string_value3.id == value.id)
-            .where(icf.name == 'Priority')
-            .cte('priorities')
-        )
-
-        # Query finale che unisce tutte le CTE
-        stmt = (
-            select(
-                first_assignments.c.id_readable,
-                first_assignments.c.first_assigned_to_TCoE,
-                last_completed.c.last_set_as_done,
-                (last_completed.c.last_set_as_done - first_assignments.c.first_assigned_to_TCoE).label('time_difference'),
-                parent_fix_versions.c.fix_version,
-                priorities.c.priority
-            )
-            .join(last_completed, first_assignments.c.id_readable == last_completed.c.id_readable)
-            .join(child_alias, first_assignments.c.id_readable == child_alias.id_readable)
-            .join(parent_alias, child_alias.parent_id == parent_alias.id_readable)
-            .join(parent_fix_versions, first_assignments.c.id_readable == parent_fix_versions.c.id_readable)
-            .join(priorities, first_assignments.c.id_readable == priorities.c.id_readable)
-            .order_by(first_assignments.c.id_readable)
-        )
-
-        # Esecuzione della query
-        with Session(engine) as session:
-            with session.begin():
-                result = session.execute(stmt).fetchall()
-
-        # Costruzione della risposta
-        response = [
-            {
-                'id_readable': id_readable,
-                'first_assigned_to_TCoE': first_assigned_to_TCoE,
-                'last_set_as_done': last_set_as_done,
-                'time_spent': time_difference,
-                'fix_version': fix_version,
-                'priority': priority
-            }
-            for id_readable, first_assigned_to_TCoE, last_set_as_done, time_difference, fix_version, priority in result
-        ]
-        
-        return response
-    @staticmethod
-    def average_validation_duration():
-
-        release_mapper = ProductRepository.rc0_releases()
-        validation_stats = IssueRepository.validation_stats()
-
-
-        groups = {version: {'general':{'time_spent':timedelta(0),'validation_count':0},'pre':{'time_spent':timedelta(0),'validation_count':0}, 'during':{'time_spent':timedelta(0),'validation_count':0}} for version in release_mapper.keys()}        
-
-        for item in validation_stats:
-            fix_version = item.get('fix_version')
-            done = item.get('last_set_as_done')
-
-            if fix_version in groups.keys():
-                if done.replace(tzinfo=utc) > release_mapper[fix_version].replace(tzinfo=utc):
-                    groups[fix_version]['during']['time_spent'] += item.get('time_spent')
-                    groups[fix_version]['during']['validation_count'] += 1
-                else:
-                    groups[fix_version]['pre']['time_spent'] += item.get('time_spent')
-                    groups[fix_version]['pre']['validation_count'] += 1
-                groups[fix_version]['general']['time_spent'] += item.get('time_spent')
-                groups[fix_version]['general']['validation_count'] += 1
-        
-        for version in groups.values():
-            for key,value in version.items():
-                value['average'] = value['time_spent'] / value['validation_count'] if value['validation_count'] > 0 else 0
-            
-
-        result = []
-
-        for version,values in groups.items():
-            release = release_mapper[version].timestamp() * 1000
-            new_item = {"version":version,'release':release}
-
-            for bucket,value in values.items():
-                new_item[f"count_{bucket}"] = value.get('validation_count',None)
-                new_item[f"avg_{bucket}"] = value.get('average',0)
-            result.append(new_item)
+            result = session.execute(stmt).fetchall()
 
         return result
+
+
+if __name__ =='__main__':
+    print(IssueRepository.prova_2())
