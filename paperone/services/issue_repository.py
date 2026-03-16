@@ -46,8 +46,10 @@ from models.value import (
 )
 
 from services.redis_client import(
-    get_prova_data,
-    set_prova_data
+    set_okr2_data,
+    get_okr2_data,
+    set_okr4_data,
+    get_okr4_data
 )
 
 
@@ -58,8 +60,41 @@ BATCH_SIZE = 1000
 
 TCoE_MEMBERS = ['Sara Tinghi', 'Simona rossi', 'Giuseppe Fragalà', 'Tommaso Capiferri', 'Nicola Montagnani']
 
+ITERVALLO_MEDIA_MOBILE = timedelta(days= (6*30))#6 mesi
+
+WORKING_SESSION_TRESHOLD = 5 #minimunm number of working session in a bucket to find it reliable
+
+def working_hours_only_timedelta(end_date:datetime,start_date:datetime):
+    end_date = end_date.replace(tzinfo=utc)
+    start_date = start_date.replace(tzinfo=utc)
+
+    current_date = start_date
+
+    working_time = timedelta(0)
+
+    while current_date < end_date:
+        if current_date.weekday() < 5:
+
+            working_day_start = datetime(current_date.year,current_date.month,current_date.day,8,0,0).replace(tzinfo=utc)
+            working_day_end = datetime(current_date.year,current_date.month,current_date.day,17,0,0).replace(tzinfo=utc)
+
+            start = max(current_date, working_day_start)
+            end = min(end_date, working_day_end)
+
+            if start < end:
+                working_time += (end - start)
+
+            current_date = datetime(current_date.year , current_date.month , current_date.day ,8,0,0).replace(tzinfo=utc) + timedelta(days=1)
+        else:
+            current_date = datetime(current_date.year , current_date.month , current_date.day ,17,0,0).replace(tzinfo=utc) + timedelta(days = 7-current_date.weekday())
+
+    return working_time
+
 def convert_to_timestamp(date):
     return datetime.fromtimestamp(date/1000,tz=timezone.utc)
+
+def convert_to_timezone_aware(date):
+    return date.replace(tzinfo=utc)
 
 def extract_field_name(targetMember:str):
 
@@ -463,7 +498,7 @@ class IssueRepository:
         return results
 
     @staticmethod
-    def prova_2():
+    def validation_changes():
         
         i = aliased(Issue)
         icf = aliased(IssueCustomField)
@@ -575,7 +610,7 @@ class IssueRepository:
                 working_sessions_cte.c.custom_field_value,
                 working_sessions_cte.c.assignee,
                 working_sessions_cte.c.assigned_ts,
-                func.max(progress_cte.c.timestamp)
+                func.max(progress_cte.c.timestamp).label('in_progress_ts')
             )
             .join(progress_cte, working_sessions_cte.c.id_readable == progress_cte.c.id_readable)
             .where(working_sessions_cte.c.timestamp > progress_cte.c.timestamp)
@@ -600,6 +635,7 @@ class IssueRepository:
                 current_session.c.custom_field_value,
                 current_session.c.assignee,
                 current_session.c.assigned_ts,
+                current_session.c.in_progress_ts,
                 func.max(previous_sessions.c.timestamp).label('previous_session_stop_ts')
             )
             .join(previous_sessions, current_session.c.assignee == previous_sessions.c.assignee)
@@ -611,6 +647,7 @@ class IssueRepository:
                 current_session.c.custom_field_value,
                 current_session.c.assignee,
                 current_session.c.assigned_ts,
+                current_session.c.in_progress_ts
             )
         ).cte('supposed_working_sessions_cte')
 
@@ -634,6 +671,7 @@ class IssueRepository:
                 supposed_working_sessions_cte.c.custom_field_value,
                 supposed_working_sessions_cte.c.assignee,
                 supposed_working_sessions_cte.c.previous_session_stop_ts,
+                supposed_working_sessions_cte.c.in_progress_ts,
                 parent.c.value.label('fix_version'),
             )
             .join(parent, supposed_working_sessions_cte.c.parent_id == parent.c.id_readable)
@@ -646,6 +684,164 @@ class IssueRepository:
 
         return result
 
+    @staticmethod
+    def validation_stats():
+
+        validation_data = IssueRepository.validation_changes()
+
+        rc0_releases = ProductRepository.rc0_releases()
+        changelog_releases = ProductRepository.changelog_releases()
+
+        buckets = {}
+
+
+        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,fix_version in validation_data:
+            
+            if fix_version in rc0_releases.keys():
+                if fix_version not in buckets.keys():
+                    
+                    buckets[fix_version] = {
+                        "pre":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
+                        "during":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
+                        "slipped":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
+                        "team_members":[]
+                    }
+                
+                if assignee not in buckets[fix_version]["team_members"]:
+                    buckets[fix_version]["team_members"].append(assignee)
+
+                working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts,in_progress_ts] if date is not None)
+
+                idle_time = working_hours_only_timedelta(working_session_start , assigned_ts)
+
+                rc0_release = convert_to_timezone_aware(rc0_releases[fix_version])
+
+
+                if working_session_start < rc0_release and stop_ts > rc0_release:
+                    pre_fw_session_chunk = working_hours_only_timedelta(rc0_release,working_session_start)
+                    during_fw_session_chunk = working_hours_only_timedelta(stop_ts,rc0_release)
+
+
+                    buckets[fix_version]["pre"]["session_count"] += 1
+                    buckets[fix_version]["slipped"]["session_count"] += 1
+                    buckets[fix_version]["pre"]["time_spent"] += pre_fw_session_chunk
+                    buckets[fix_version]["slipped"]["time_spent"] += during_fw_session_chunk
+                    buckets[fix_version]["pre"]["idle_time"] += idle_time
+
+                else:
+                    bucket = 'pre' if stop_ts < rc0_release else 'during'  if assigned_ts > rc0_release else 'slipped'
+                    
+                    #logger.debug(f"logging in {bucket}-- {stop_ts} | {rc0_release} | {working_session_start}")
+
+                    session_duration = working_hours_only_timedelta(stop_ts , working_session_start)
+
+                    buckets[fix_version][bucket]["session_count"] += 1
+                    buckets[fix_version][bucket]["time_spent"] += session_duration
+                    buckets[fix_version][bucket]["idle_time"] += idle_time
+                
+        
+        okr2 = []
+        okr4 = []
+
+        for version, value in buckets.items():
+
+            test_phase_end = changelog_releases[version] if version in changelog_releases.keys() else rc0_releases[version]
+
+            team_members = value.get('team_members',[])
+            members_count = len(team_members)
+
+            test_phase_start = rc0_releases[version] if version in rc0_releases.keys() else changelog_releases[version]
+
+            test_phase_duration = working_hours_only_timedelta(test_phase_end,test_phase_start)
+
+            test_phase_working_time = test_phase_duration * members_count #approssimo tutti i membri a full time
+
+            during_time_partition = value["during"]["time_spent"] / test_phase_working_time if test_phase_working_time != timedelta(0) else 0
+            slipped_time_partition = value["slipped"]["time_spent"] / test_phase_working_time if test_phase_working_time != timedelta(0) else 0
+
+            test_time_partition_estimate = 1 - (during_time_partition + slipped_time_partition)
+
+            okr2.append({
+                    "version":version,
+                    "date": test_phase_end,
+                    "during":during_time_partition,
+                    "slipped":slipped_time_partition,
+                    "test":test_time_partition_estimate,
+                    "duration":test_phase_duration * 3,
+                    "raw_duration": test_phase_end - test_phase_start
+                })
+            
+
+            okr4_item = {
+                "version":version,
+                "date": test_phase_end,
+            }
+
+            for bucket, data in value.items():
+                if isinstance(data,dict) and data["session_count"]>WORKING_SESSION_TRESHOLD: 
+                    okr4_item[f"{bucket}_duration"] = data["time_spent"] / data["session_count"] if data["session_count"] != 0 else 0
+                    okr4_item[f"{bucket}_idle_duration"] = data["idle_time"] / data["session_count"] if data["session_count"]  != 0 else 0 
+
+            okr4.append(okr4_item)
+
+        for phase in okr2:
+            date = phase.get('date',None)
+            version = phase.get('version',None)
+
+            previous_releases_count = 0
+            previous_releases_duration = timedelta(0)
+            for other_phase in okr2:
+                other_date = other_phase.get('date',None)
+                other_version = other_phase.get('version',None)
+                other_date_duration = other_phase.get('duration')
+
+
+                time_diff = date - other_date
+                if time_diff > timedelta(0) and time_diff < ITERVALLO_MEDIA_MOBILE:
+                    previous_releases_duration += other_date_duration
+                    previous_releases_count += 1
+            phase['average_previous_phase_duration'] = previous_releases_duration / previous_releases_count if previous_releases_count != 0 else 0
+        
+        return okr2,okr4
+
+
+    def okr2_stat():
+
+        data = get_okr2_data()
+        if data:
+            return data
+
+        okr2,okr4 = IssueRepository.validation_stats()
+
+        set_okr2_data(okr2)
+        set_okr4_data(okr4)
+
+        return okr2
+
+
+    def okr4_stat():
+        data = get_okr4_data()
+        if data:
+            return data
+
+        okr2,okr4 = IssueRepository.validation_stats()
+
+        set_okr2_data(okr2)
+        set_okr4_data(okr4)
+
+        return okr4
 
 if __name__ =='__main__':
-    print(IssueRepository.prova_2())
+    print(IssueRepository.prova())

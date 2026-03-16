@@ -25,21 +25,16 @@ def defect_rate():
 def fte():
     return TestRepository.test_over_fte()
 
-@app.get('/validation-duration')
-def validation_duration():
-    return IssueRepository.average_validation_duration()
+@app.get('/okr2')
+def OKR2():
+    okr2 = IssueRepository.okr2_stat()
+    return okr2
 
-@app.get('/media-mobile')
-def media_mobile():
-    return ProductRepository.get_tempo_di_esecuzione_medio().get('generic_stats',None)
+@app.get('/okr4')
+def OKR4():
+    okr4 = IssueRepository.okr4_stat()
+    return okr4
 
-@app.get('/prova_okr2')
-def prova():
-    return IssueRepository.elaborate_prova().get('okr2',None)
-
-@app.get('/prova_okr4')
-def prova():
-    return IssueRepository.elaborate_prova().get('okr4',None)
 
 if __name__ == '__main__':
     uvicorn.run(app,host='0.0.0.0',port=8000)

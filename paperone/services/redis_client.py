@@ -18,6 +18,8 @@ def set_youtrack_last_sync():
     redis_client.set('youtrack_sync_timestamp',now)
 
 
+
+
 def get_changelog_releases():
     releases = redis_client.hgetall('changelog_releases')
     return {k: datetime.datetime.fromtimestamp(float(v)) for k, v in releases.items()}
@@ -30,38 +32,54 @@ def set_changelog_releases(releases:dict):
 
 
 
-def get_prova_data():
-
-    data = redis_client.get("prova_data") or []
-    data = json.loads(data)
-    result = []
+def get_okr2_data():
+    raw_data = redis_client.get('okr2')
+    data = json.loads(raw_data)
     for item in data:
-        transformed_item = {
-            k: (
-                datetime.datetime.fromtimestamp(float(v))
-                if v and k in ["first_assigned_to_TCoE", "last_set_as_done", "latest_completion","first_start"]
-                else datetime.timedelta(milliseconds=float(v))
-                if v and k in ["time_spent", "total_duration","idle_in_TCoE"]
-                else v
-            )
-            for k, v in item.items()
-        }
-        result.append(transformed_item)
-    return result
+        for k,v in item.items():
+            if isinstance(v,dict):
+                item[k] = datetime.datetime.fromtimestamp(float(v["value"])) if v["type"] == "datetime" else datetime.timedelta(seconds=float(v["value"]))
+    return data
+
+def set_okr2_data(data:list):
+    new_list = []
+    for item in data:
+        new_obj = {}
+        for k,v in item.items():
+            if isinstance(v,datetime.datetime):
+                new_obj[k] = {"value":v.timestamp(),"type":"datetime"}
+            elif isinstance(v,datetime.timedelta):
+                new_obj[k] = {"value":v.total_seconds(),"type":"timedelta"}
+            else:
+                new_obj[k] = v
+        new_list.append(new_obj)
+    redis_client.set('okr2',json.dumps(new_list))
 
 
-def set_prova_data(prova_data:list):
 
-    json_serializable_data = [
-        {
-            k: (
-                v.total_seconds()*1000 if isinstance(v, datetime.timedelta)
-                else v.timestamp() if isinstance(v, datetime.datetime)
-                else v
-            )
-            for k, v in item.items()
-        }
-        for item in prova_data
-    ]
 
-    redis_client.set("prova_data", json.dumps(json_serializable_data))
+def get_okr4_data():
+    raw_data = redis_client.get('okr4')
+    if not raw_data:
+        return None
+
+    data = json.loads(raw_data)
+    for item in data:
+        for k,v in item.items():
+            if isinstance(v,dict):
+                item[k] = datetime.datetime.fromtimestamp(float(v["value"])) if v["type"] == "datetime" else datetime.timedelta(seconds=float(v["value"]))
+    return data
+
+def set_okr4_data(data:list):
+    new_list = []
+    for item in data:
+        new_obj = {}
+        for k,v in item.items():
+            if isinstance(v,datetime.datetime):
+                new_obj[k] = {"value":v.timestamp(),"type":"datetime"}
+            elif isinstance(v,datetime.timedelta):
+                new_obj[k] = {"value":v.total_seconds(),"type":"timedelta"}
+            else:
+                new_obj[k] = v
+        new_list.append(new_obj)
+    redis_client.set('okr4',json.dumps(new_list))

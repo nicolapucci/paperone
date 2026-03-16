@@ -1,5 +1,4 @@
 from datetime import datetime
-import pandas as pd
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -167,10 +166,6 @@ tmp_release_mapper = {
     '4.17.13':datetime(2025,12,10),
 }
 
-build_release_sheet_name = "License_Server"
-changelog_sheet_name = "Changelog"
-time_to_test_release_path = "resources/Modello_TCoE_Report_OKR-2_Iniziativa-Tempo_Test_Release.xlsx"
-
 wiki_changelog_url = "https://wiki.kalliope.com/it/latest/Changelog.html"
 
 
@@ -178,128 +173,6 @@ class ProductRepository:
     @staticmethod
     def rc0_releases():
         return tmp_release_mapper
-
-    @staticmethod
-    def get_tempo_di_esecuzione_medio():
-        build_release, changelog = get_time_to_test_release_data()
-        
-        first_build_release = {}
-
-        for item in build_release:
-            version = item['Build']
-            release = item['release_date']
-
-            if not  version in first_build_release:
-                first_build_release[version] = release
-            elif release < first_build_release[version]:
-                first_build_release[version] = release
-
-        montly_stat = {}
-        montly_stat_excluding_short_tests = {}
-
-        for version,date in changelog.items():
-
-            rc0_release = first_build_release[version]
-            days_passed = (date - rc0_release).days
-
-            date = datetime(
-                year=date.year,
-                month=date.month,
-                day=1
-            )
-            if days_passed >7:
-                if date in montly_stat_excluding_short_tests:
-                    montly_stat_excluding_short_tests[date]={
-                        "releases":montly_stat_excluding_short_tests[date]["releases"]+1,
-                        "test_days":montly_stat_excluding_short_tests[date]["test_days"]+days_passed
-                    }
-                else:
-                    montly_stat_excluding_short_tests[date]={
-                        "releases":1,
-                        "test_days":days_passed
-                    }
-
-            if date in montly_stat:
-                montly_stat[date]={
-                    "releases":montly_stat[date]["releases"]+1,
-                    "test_days":montly_stat[date]["test_days"]+days_passed,   
-                }
-                montly_stat[date]["avg_test_duration"]=montly_stat[date]["test_days"] / montly_stat[date]["releases"]
-            else:
-                montly_stat[date]={
-                    "releases":1,
-                    "test_days":days_passed,
-                    "avg_test_duration":days_passed
-                }
-
-        def recap(montly_stat):
-            date = datetime( #prendo solo gli ultimi 2 anni
-                year=datetime.today().year -2,
-                month=datetime.today().month,
-                day=1
-            )
-            recap = {}
-            while date < datetime.today():
-                if date not in montly_stat:
-                    recap[date]={
-                        "releases":0,
-                        "test_days":0
-                    }
-                else:
-                    recap[date]=montly_stat[date]
-                year = date.year if date.month<12 else date.year+1
-                month = date.month + 1 if date.month<12 else 1
-                date = datetime(
-                    year=year,
-                    month=month,
-                    day=1
-                )
-
-            
-            prova = {}
-            detailed_stats = []
-            generic_stats = []
-            
-            for date,data in recap.items():
-                firmware_releases = 0
-                test_days = 0
-
-                for i in range (1,7):
-                    month = date.month
-                    year = date.year
-
-
-                    year = year if month>i else year -1
-                    month = month-i if month>i else month+12-i
-
-                    new_date = datetime(
-                        year=year,
-                        month=month,
-                        day=1
-                    )
-
-                    if new_date in recap:
-                        month_data = recap[new_date].copy()
-                        month_data['Date']=date
-                        month_data['Event Date']=new_date
-                        detailed_stats.append(month_data)
-
-                        test_days += recap[new_date]["test_days"]
-                        firmware_releases += recap[new_date]["releases"]
-
-                media_mobile = test_days / firmware_releases if firmware_releases > 0 else 0
-                recap[date]["media_mobile"] = media_mobile
-                generic_stats.append({"date":date,"media_mobile":media_mobile})
-                prova[date] = recap[date]["media_mobile"]
-            
-            return generic_stats,detailed_stats
-
-        [generic_stats,detailed_stats]= recap(montly_stat)
-        return {
-            "generic_stats":generic_stats,
-            "partial":recap(montly_stat_excluding_short_tests)[0],
-            "detailed_recap":detailed_stats
-        }
 
     @staticmethod
     def changelog_releases():
@@ -340,47 +213,3 @@ class ProductRepository:
         set_changelog_releases(versions)
 
         return versions
-
-
-
-def helper_clean_version(version_str):
-    if isinstance(version_str, str):
-        splits = re.split('-', version_str)
-        return splits[0].strip()
-    return version_str
-
-def helper_parse_date(date_str):
-    if isinstance(date_str, pd.Timestamp):
-        return date_str.date()
-    return pd.to_datetime(date_str).date()
-
-def helper_parse_changelog_date(date_str):
-    [day,month,year] = re.split('/',date_str,maxsplit=2)
-    return helper_parse_date( f"{month}/{day}/{year}")
-
-    
-def get_time_to_test_release_data():
-    build_release_df = pd.read_excel(time_to_test_release_path, sheet_name=build_release_sheet_name)
-    changelog_df = pd.read_excel(time_to_test_release_path, sheet_name=changelog_sheet_name)
-
-    build_release_df.columns = build_release_df.columns.str.strip()
-    changelog_df.columns = changelog_df.columns.str.strip()
-    
-    build_release_df = pd.DataFrame({
-        "Build": build_release_df.iloc[:,0].apply(helper_clean_version),
-        "release_date": build_release_df['release_date'].apply(helper_parse_date)
-    })
-   
-    build_release_dict = build_release_df.to_dict(orient='records')
-
-    changelog_df = pd.DataFrame({
-        "Version": changelog_df.iloc[:, 1],
-        "release_date": changelog_df.iloc[:, 3].apply(helper_parse_changelog_date)
-    })  
-    changelog_dict = dict(zip(
-        changelog_df["Version"],
-        changelog_df["release_date"]
-    ))
-
-    return build_release_dict, changelog_dict
-
