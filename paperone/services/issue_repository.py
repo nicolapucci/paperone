@@ -747,6 +747,11 @@ class IssueRepository:
                             "time_spent":timedelta(0),
                             "idle_time": timedelta(0)
                         },
+                        "global":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
                         "team_members":[]
                     }
                 
@@ -764,6 +769,7 @@ class IssueRepository:
                     pre_fw_session_chunk = working_hours_only_timedelta(rc0_release,working_session_start)
                     during_fw_session_chunk = working_hours_only_timedelta(stop_ts,rc0_release)
 
+                    session_duration = pre_fw_session_chunk + during_fw_session_chunk
 
                     buckets[fix_version]["pre"]["session_count"] += 1
                     buckets[fix_version]["slipped"]["session_count"] += 1
@@ -782,7 +788,9 @@ class IssueRepository:
                     buckets[fix_version][bucket]["time_spent"] += session_duration
                     buckets[fix_version][bucket]["idle_time"] += idle_time
                 
-        
+                buckets[fix_version]['global']['session_count'] +=1
+                buckets[fix_version]['global']['time_spent'] += session_duration
+                buckets[fix_version]['global']['idle_time'] += idle_time
         okr2 = []
         okr4 = []
 

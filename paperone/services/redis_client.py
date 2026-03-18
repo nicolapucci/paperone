@@ -28,6 +28,7 @@ def set_changelog_releases(releases:dict):
     redis_client.delete('changelog_releases')
     for release_key, release_value in releases.items():
         redis_client.hset('changelog_releases', release_key, release_value.timestamp())
+    redis_client.expire('changelog_releases', 60 * 5)
 
 
 
@@ -54,6 +55,7 @@ def set_okr2_data(data:list):
                 new_obj[k] = v
         new_list.append(new_obj)
     redis_client.set('okr2',json.dumps(new_list))
+    redis_client.expire('okr2', 60 * 10)
 
 
 
@@ -83,3 +85,4 @@ def set_okr4_data(data:list):
                 new_obj[k] = v
         new_list.append(new_obj)
     redis_client.set('okr4',json.dumps(new_list))
+    redis_client.expire('okr4', 60 * 10)

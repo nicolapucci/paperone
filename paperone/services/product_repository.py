@@ -186,7 +186,7 @@ class ProductRepository:
 
         if releases:
             return releases
-        
+        print('not found in redis')
         response = requests.get(wiki_changelog_url)
 
         response.raise_for_status()
@@ -204,7 +204,6 @@ class ProductRepository:
             match = re.search(pattern,href) if href else None
 
             if match:
-                print(href)
                 version = re.sub(r'-','.',match.group(1))
                 day = int(match.group(2))
                 month = int(match.group(3))

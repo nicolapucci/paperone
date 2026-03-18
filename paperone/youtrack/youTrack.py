@@ -17,30 +17,35 @@ import json
 from services.logger import logger
 
 
+"""
+    youTrack_worker perform 1 cicle every 24 hours,
+    in each cicle he fetches Issue and Ativityitems data from YouTrack (if he has info abt a previous update he only takes data since 1h before last update),
+    then uses IssueRepository to save the items
+"""
+
+
 YOUTRACK_TOKEN = os.getenv('YOUTRACK_TOKEN') 
 YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 
-issue_json_path = './issue.json'
+#Time (hours) to wait before re-pulling data from YouTrack
+update_frequency = 24
 
-youtrack_server_reachable = True
-update_frequency = 24 #h
-
-fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
+#YouTrack will return issues matching the following query
 base_query= 'project: Kalliope'
-#base_query= 'summary: "(Integration Test Verification)"'
-#base_query= 'project: Kalliope Type: Bug'
-#base_query = 'project: Kalliope Type: Bug Assignee: TCoE Stage: Done State: Verified'
+
+#YouTrack requires us to declare the name of the fields we want him to return in the API requests
+fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
+
+#same as field but for ActivityItems
 activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value),removed(id,idReadable),target(id,idReadable),targetMember'
+
+#We need to specify the category of ActivityItems we want YouTrack to return(CustomFieldCategory will return Issue custom Fields)
 activity_item_category = 'CustomFieldCategory'
 
 def update_query(last_update):
-    return f"{base_query} updated: {last_update} .. Now" #to check the type of the timestamp accepted by youtrack
+    return f"{base_query} updated: {last_update} .. Now"
 
-def get_issues_from_json(filepath):
-    with open(filepath) as p:
-        return json.load(p)
-
-def get_issues(fields,query):
+def get_issues(fields,query):#sync fetch issues from YouTrack
 
     top = 1000
     skip = 0
@@ -83,13 +88,10 @@ def get_issues(fields,query):
 
     return issues
 
-def upsert_issues_thread(issues):
-    IssueRepository.upsert_issues(issue_data=issues)
-
 def upsert_activity_items_thread(chunk):
     IssueRepository.upsert_activity_items(activity_item_data=chunk)
 
-async def get_activity_items(fields,query,categories):
+async def get_activity_items(fields,query,categories):#async fetch ActivityItems from YouTrack
 
     top = 3000
     skip = 0
@@ -128,16 +130,19 @@ async def get_activity_items(fields,query,categories):
             logger.warning(f"Error fetching data: {e}")
             refetch = False
 
-async def process_activity_items(executor, query):
+async def process_activity_items(executor, query):#Uses ThreadPoolExecutor to concurrently upsert batches of ActivityItems received from get_activity_items()
     batch = []
     activity_items_count = 0
     tasks = []
     loop = asyncio.get_event_loop()
 
+    #get_activity_items yields abt 3k items, we gather them in batches of 6k to reduce the number of iterations needed,
+    #we don't want to create big batches to avoid overloading a worker
     async for chunk in get_activity_items(fields=activity_item_field, categories=activity_item_category, query=query):
         batch.extend(chunk)
 
         if len(batch) >= 6000:
+            #every batch we create a task to upsert the data in the batch
             tasks.append(loop.run_in_executor(executor, upsert_activity_items_thread, batch.copy()))
             activity_items_count += len(batch)
             batch = []
@@ -146,6 +151,7 @@ async def process_activity_items(executor, query):
         tasks.append(loop.run_in_executor(executor, upsert_activity_items_thread, batch))
         activity_items_count += len(batch)
 
+    #we launch the tasks
     await asyncio.gather(*tasks)
 
     return activity_items_count
@@ -156,21 +162,21 @@ async def youTrack_worker():
     while True:
         logger.info("Starting Issue sync...")
 
-        last_sync = get_youtrack_last_sync()
+        last_sync = get_youtrack_last_sync()#timestamp from the last cicle saved in redis
 
-        last_sync = IssueRepository.get_max_updated_issue() if not last_sync else last_sync
+        last_sync = IssueRepository.get_max_updated_issue() if not last_sync else last_sync#if there is nothing on redis then check the most recend issue.updated from the saved issues
             
-        query=update_query(last_sync) if last_sync else base_query
+        query=update_query(last_sync) if last_sync else base_query#if there is a previous update only ask for data from 1h before that
 
-        issues = get_issues(fields=fields,query=query) if youtrack_server_reachable else get_issues_from_json(issue_json_path)
-
-        logger.info('abt to upsert')
-        IssueRepository.upsert_issues(issues)
         try:            
             activity_items_count = 0
 
-            # EVALUATE THE BEST WAY TO EXECUTE THE WORKER AS A SEPARATE PROCESS
-            batch = []
+            issues = get_issues(fields=fields,query=query)#sync retrieve all issue data that matches query
+
+            logger.info('abt to upsert')
+
+            IssueRepository.upsert_issues(issues)#insert data updating coflicts
+
             with ThreadPoolExecutor(max_workers=10) as executor:
                 activity_items_count += await process_activity_items(executor,query)
 
@@ -179,7 +185,7 @@ async def youTrack_worker():
 
             logger.info(log_string)
 
-            set_youtrack_last_sync()
+            set_youtrack_last_sync()#set last sync at now
         
         except Exception as e:
             logger.info(f"Error during YouTrack syncronization: {e}")
