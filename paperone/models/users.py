@@ -10,6 +10,7 @@ from sqlalchemy import (
 
 from models.base import Base
 
+#dichiarazione della classe utente che contiene id e nome di esso
 class User(Base):
 
     __tablename__ = 'user'

@@ -12,7 +12,28 @@ import datetime
 from models.base import Base
 from models.value import FieldValue
 
+"""
+    Issue rappresenta la Issue di YouTrack,
 
+    IssueCustomField rappresenta un customm Field di una Issue 
+        -name è il nome del campo
+        -value è ottenuto dalla relazione con FieldValue
+        -relazione con Issue su issue_id = Issue.id
+        -relazione con FieldValue su value_id = FieldValue.id
+        
+    IssueCustomFieldChange rappresenta un cambiamento di un IssueCustomField 
+        -old_value è il valore rimosso dall'IssueCustomField
+        -new_value è il valore aggiunto all'IssueCustomField (NON SOSTITUISCE QUELLO PRESENTE)
+        -relazione com IssueCustomField su field_id = IssueCustomField.id
+        -relazione con FieldValue su old_value_id = FieldValue.id
+        -relazione con FieldValue su new_value_id = FieldValue.id
+"""
+
+
+
+
+
+#rappresenta una issue di YouTrack
 class Issue(Base):
     __tablename__ = 'issue'
 
@@ -32,7 +53,7 @@ class Issue(Base):
     created: Mapped[datetime.datetime]
     updated: Mapped[datetime.datetime]
 
-
+#rappresenta un singolo CustomField di una issue
 class IssueCustomField(Base):
     __tablename__ = 'issueCustomField'
 
@@ -58,8 +79,9 @@ class IssueCustomField(Base):
     __table_args__ = (
         UniqueConstraint("issue_id", "name"),
     )
-
-
+ 
+#rappresenta un cambiamento di un IssueCustomField di una Issue
+#può essere inteso per esempio come un cambio di assegnatario o di stage
 class IssueCustomFieldChange(Base):
     __tablename__= 'issueCustomFieldChange'
 

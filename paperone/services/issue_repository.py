@@ -52,7 +52,13 @@ from services.redis_client import(
     get_okr4_data
 )
 
-
+"""
+    issue_repository è una classe dichiarata che contiene due grandi funzionalità:
+    -inserimento e aggiornamento dati;
+    -analisi dei bug;
+    -statistiche di validazione e OKR e
+    -gestione cache.
+"""
 
 utc = pytz.UTC
 
@@ -64,6 +70,7 @@ ITERVALLO_MEDIA_MOBILE = timedelta(days= (6*30))#6 mesi
 
 WORKING_SESSION_TRESHOLD = 5 #minimunm number of working session in a bucket to find it reliable
 
+#definizione della funzione che calcola quanto tempo lavorativo passa tra due date
 def working_hours_only_timedelta(end_date:datetime,start_date:datetime):
     end_date = end_date.replace(tzinfo=utc)
     start_date = start_date.replace(tzinfo=utc)
@@ -90,12 +97,15 @@ def working_hours_only_timedelta(end_date:datetime,start_date:datetime):
 
     return working_time
 
+
 def convert_to_timestamp(date):
     return datetime.fromtimestamp(date/1000,tz=timezone.utc)
 
+#imposta la timezone di una data in UTC
 def convert_to_timezone_aware(date):
     return date.replace(tzinfo=utc)
 
+#estrae il nome del custom field da ActivityItems/TargetMember
 def extract_field_name(targetMember:str):
 
     match = re.search(r'__CUSTOM_FIELD__(\w+(?: \w+)*)_\d+', targetMember)
@@ -106,6 +116,8 @@ def extract_field_name(targetMember:str):
     else:
         return None
 
+#definizione della funzione che serve a creare un oggetto della classe value scelto in 
+#base al tipo dell'item passato 
 def get_value_obj(item):
     item = item if not isinstance(item,dict) else item.get('name',None)
     if isinstance(item,str):
@@ -116,6 +128,8 @@ def get_value_obj(item):
         return DateValue(value=item)#check if it's correct
     return None
 
+#crea un dizionario per ottenere gli id di custom field partendo da CustomField.name e 
+#Issue.id_readable
 def load_custom_field_mapper(session):
     stmt = (
         select(IssueCustomField.id, IssueCustomField.name, Issue.id_readable)
@@ -132,7 +146,8 @@ def load_custom_field_mapper(session):
     return mapper
 
 class IssueRepository:
-
+#metodo che restituisce il valore massimo nella colonna updated della tabella issue e che crea
+#una connessione temporanea al database locale
     @staticmethod
     def get_max_updated_issue():
         stmt = select(func.max(Issue.updated))
@@ -142,6 +157,10 @@ class IssueRepository:
         return max_updated.strftime('%Y-%m') if max_updated else None
 
     # CHECK WHY SOME CUSTOM FIELDS ARE LOST (time_left, spent_time , estimation // prob due to the type of the field)
+    #questo metodo che segue è uno dei due coinvolti per la prima funzionalità della classe cui fa 
+    #parte
+    #il metodo ha il compito di sincronizzare i dati delle issue verso il database locale
+    #se l'issue esiste già viene aggiornata altrimenti viene creata
     @staticmethod
     def upsert_issues(issue_data:list):
         with Session(engine) as session:
@@ -244,7 +263,7 @@ class IssueRepository:
                                 'name': custom_field.name,
                                 'value_id': value_id,
                                 'issue_id': issue_id
-                            }).on_conflict_do_update(
+                            }).on_conflict_do_update(#ut
                                 index_elements=["issue_id", "name"],
                                 set_={
                                     "value_id": insert(IssueCustomField).excluded.value_id
@@ -259,6 +278,9 @@ class IssueRepository:
                 raise
 
     # NEED TO DRASTICALLY REDUCE THE TIME NEEDED TO UPSERT ACTIVITYITEMS
+    #questo metodo che segue è il secondo dei due coinvolti nella prima funzionalità della classe
+    #esso ha invece la funzione di sincronizzare verso il database locale lo storico delle
+    #modifiche affinchè vengano mappati i cambiamenti di valore nel tempo(più complesso del primo)
     @staticmethod
     def upsert_activity_items(activity_item_data:list):
         icf = aliased(IssueCustomField)
@@ -348,7 +370,7 @@ class IssueRepository:
                 logger.error(f"Error while upserting data: {e}")
                 session.rollback()
                 raise
-
+    #questo metodo conta mensilmente i bug originati sia dai clienti che non 
     @staticmethod
     def count_reported_bugs():
 
@@ -401,6 +423,8 @@ class IssueRepository:
         
         return customer_reported_bugs,bugs
 
+    #il metodo che segue conta mensilmente quanti bug sono stati riscontrati dai clienti e non
+    #raggruppandoli per prodotto
     @staticmethod
     def count_reported_bugs_group_by_product():
 
@@ -457,6 +481,8 @@ class IssueRepository:
         
         return customer_reported_bugs,bugs
 
+    #questo metodo calcola il defect rate, ossia il tasso in percentuale ottenuto dal rapporto tra
+    #bug riscontrati dai clienti e non su base mensile
     @staticmethod
     def defect_rate():
         (customer_reported_bugs,bugs) = IssueRepository.count_reported_bugs()
@@ -496,7 +522,8 @@ class IssueRepository:
       
         results = [{'date': key, 'values': value} for key, value in ratios.items()]
         return results
-
+    
+    #questo metodo ricostruisce la vita di ogni singolo validation 
     @staticmethod
     def validation_changes():
         
@@ -684,6 +711,10 @@ class IssueRepository:
 
         return result
 
+    #all'interno di questo metodo vengono raggruppati i validation per bucket, calcolati i tempi
+    #effettivi di lavorazione e d'attesa in mano al TCoE, viene calcolata la durata totale della
+    #fase di test, la durata media di una fase di test per bucket, il tempo d'inattività medio e la 
+    #media mobile
     @staticmethod
     def validation_stats():
 
@@ -816,7 +847,7 @@ class IssueRepository:
         
         return okr2,okr4
 
-
+    #questo metodo restituisce i dati dell'OKR 2 nella maniera più rapida possibile 
     def okr2_stat():
 
         data = get_okr2_data()
@@ -830,7 +861,8 @@ class IssueRepository:
 
         return okr2
 
-
+    #questo metodo uguale al precedente restituisce i dati dell'OKR 4 nella maniera più rapida 
+    #possibile
     def okr4_stat():
         data = get_okr4_data()
         if data:
@@ -842,6 +874,6 @@ class IssueRepository:
         set_okr4_data(okr4)
 
         return okr4
-
+        
 if __name__ =='__main__':
     print(IssueRepository.prova())

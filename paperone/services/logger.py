@@ -16,3 +16,4 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+#questo codice configura il sistema di logging usato nel progetto

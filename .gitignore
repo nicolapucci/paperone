@@ -9,6 +9,8 @@
 **/**.xlsx
 **/**.csv
 
+**/prova_adriano.py
+
 **/issue.json
 
 **/grafana.json

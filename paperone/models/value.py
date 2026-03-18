@@ -3,6 +3,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from models.base import Base
 import datetime
 
+"""
+    Value rappresenta il valore che deve assumere un CustomField di una issue
+        classi che estendono Value:
+            StringValue esiste perchè il valore di CustomField sia di tipo stringa
+            DataValue esiste perchè  il valore di CustomField sia di tipo data
+            NumberValue esiste perchè il valore di CustomField sia di tipo numerico
+"""
+
 class Value(Base):
     __tablename__ = 'values'
     
@@ -16,7 +24,6 @@ class Value(Base):
         'polymorphic_on': type
     }
 
-
 class StringValue(Value):
     __tablename__ = 'string_values'
     
@@ -28,7 +35,6 @@ class StringValue(Value):
     __mapper_args__ = {
         'polymorphic_identity': 'string'
     }
-
 
 class DateValue(Value):
     __tablename__ = 'date_values'
@@ -42,7 +48,6 @@ class DateValue(Value):
         'polymorphic_identity': 'date'
     }
 
-
 class NumberValue(Value):
     __tablename__ = 'number_values'
     
@@ -54,8 +59,6 @@ class NumberValue(Value):
     __mapper_args__ = {
         'polymorphic_identity': 'number'
     }
-
-
 
 
 class FieldValue(Base):
@@ -80,7 +83,6 @@ class PrimitiveValue(FieldValue):
     __mapper_args__ = {
         'polymorphic_identity': 'primitive'
     }
-
 
 class ArrayValue(FieldValue):
     __tablename__ = 'array_values'

@@ -6,6 +6,11 @@ from bs4 import BeautifulSoup
 
 from services.redis_client import get_changelog_releases,set_changelog_releases
 
+"""
+    Il codice raffigurato fa nel complesso tre cose:
+    -registro storico delle fw e
+    -scraper del changelog(interrogazione continua della fonte)
+"""
 tmp_release_mapper = {
     '4.0.0':datetime(2015,11,17),
     '4.0.1':datetime(2015,11,19),
@@ -180,7 +185,6 @@ class ProductRepository:
         releases = get_changelog_releases()
 
         if releases:
-            print('found in redis')
             return releases
         
         response = requests.get(wiki_changelog_url)
