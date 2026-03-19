@@ -147,8 +147,8 @@ def load_custom_field_mapper(session):
 
 class IssueRepository:
     
-#metodo che restituisce il valore massimo nella colonna updated della tabella issue e che crea
-#una connessione temporanea al database locale
+    #metodo che restituisce il valore massimo nella colonna updated della tabella issue e che crea
+    #una connessione temporanea al database locale
     @staticmethod
     def get_max_updated_issue():
         stmt = select(func.max(Issue.updated))
@@ -831,7 +831,8 @@ class IssueRepository:
         
         return grafana_formatted_result
             
-    #questo metodo restituisce i dati dell'OKR 2 nella maniera più rapida possibile 
+    #questo metodo restituisce i dati dell'OKR 2 nella maniera più rapida possibile
+    @staticmethod 
     def okr2():
 
         data = get_okr2_data()
@@ -846,6 +847,7 @@ class IssueRepository:
         return okr2
 
     #questo metodo uguale al precedente restituisce i dati dell'OKR 4 nella maniera più rapida possibile
+    @staticmethod
     def okr4():
         data = get_okr4_data()
         if data:
@@ -857,3 +859,122 @@ class IssueRepository:
         set_okr4_data(okr4_data)
 
         return okr4_data
+
+    @staticmethod
+    def prova_rework_validation_stats():
+
+        validation_data = IssueRepository.validation_changes()
+
+        rc0_releases = ProductRepository.rc0_releases()
+        changelog_releases = ProductRepository.changelog_releases()
+
+        validations = {}
+
+
+        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,fix_version in validation_data:
+            if fix_version in rc0_releases.keys():
+                rc0_release = convert_to_timezone_aware(rc0_releases[fix_version])
+                assigned_ts = convert_to_timezone_aware(assigned_ts)
+                stop_ts = convert_to_timezone_aware(stop_ts)
+                previous_session_stop_ts = convert_to_timezone_aware(previous_session_stop_ts)
+                in_progress_ts = convert_to_timezone_aware(in_progress_ts)
+                
+                if id_readable not in validations.keys():
+                    validations[id_readable] = {
+                        "first_assigned_to_TCoE":assigned_ts,
+                        "last_set_as_Done":stop_ts,
+                        "fix_version":fix_version,
+                        "time_spent":timedelta(0),
+                        "idle_time":timedelta(0),
+                        "working_sessions":0
+                    }
+
+
+
+                #tmp solution because we don't have a first_assigned_to_TCoE and last_set_as_Done yet
+                validations[id_readable]["first_assigned_to_TCoE"] = assigned_ts if assigned_ts < validations[id_readable]["first_assigned_to_TCoE"] else validations[id_readable]["first_assigned_to_TCoE"]
+                validations[id_readable]["last_set_as_Done"] = stop_ts if stop_ts < validations[id_readable]["last_set_as_Done"] else validations[id_readable]["last_set_as_Done"]
+                
+                working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts,in_progress_ts] if date is not None)
+                
+                validations[id_readable]["time_spent"] += working_hours_only_timedelta(stop_ts,working_session_start)
+                validations[id_readable]["idle_time"] += working_hours_only_timedelta(working_session_start,assigned_ts)
+                validations[id_readable]["working_sessions"] += 1
+
+                if assigned_ts < rc0_release and stop_ts > rc0_release:
+                    validations[id_readable]['bucket'] = 'slipped_to_TCoE'
+
+
+            fix_versions_dict = {}
+            for id_readable,validation_info in validations.items():
+
+                rc0_release = convert_to_timezone_aware(rc0_releases[validation_info["fix_version"]])
+                fix_version = validation_info["fix_version"]
+
+                if fix_version not in fix_versions_dict.keys():
+                    fix_versions_dict[fix_version] = {"tot":{
+                        "count":0,
+                        "time_spent":timedelta(0),
+                        "working_sessions":0,
+                        "idle_time":timedelta(0)
+                        }}
+                
+                bucket = validation_info.get('bucket',None)
+                if not bucket:
+                    start = validation_info['first_assigned_to_TCoE']
+                    end = validation_info['last_set_as_Done']
+
+                    if start < rc0_release and end < rc0_release:
+                        bucket = 'pre'
+                    elif start > rc0_release and end > rc0_release:
+                        bucket = 'during'
+                    else:
+                        bucket = 'slipped_not_to_TCoE'
+
+                if bucket not in fix_versions_dict[fix_version].keys():
+                    fix_versions_dict[fix_version][bucket] = {
+                        "count":0,
+                        "time_spent":timedelta(0),
+                        "working_sessions":0,
+                        "idle_time":timedelta(0)
+                        }
+
+                fix_versions_dict[fix_version][bucket]["count"] += 1
+                fix_versions_dict[fix_version][bucket]["working_sessions"] += validation_info["working_sessions"]
+                fix_versions_dict[fix_version][bucket]["time_spent"] += validation_info["time_spent"]
+                fix_versions_dict[fix_version][bucket]["idle_time"] += validation_info["idle_time"]
+
+                fix_versions_dict[fix_version]["tot"]["count"] += 1
+                fix_versions_dict[fix_version]["tot"]["working_sessions"] += validation_info["working_sessions"]
+                fix_versions_dict[fix_version]["tot"]["time_spent"] += validation_info["time_spent"]
+                fix_versions_dict[fix_version]["tot"]["idle_time"] += validation_info["idle_time"]
+
+
+        grafana_formatted_result = []
+
+        for fix_version, version_info in fix_versions_dict.items():
+            grafana_formatted_item = {
+                "date": rc0_releases[fix_version],
+                "Fix Version": fix_version,
+            }
+
+            for bucket, bucket_info in version_info.items():
+                
+                count = bucket_info['count']
+                working_sessions = bucket_info["working_sessions"]
+                time_spent = bucket_info["time_spent"]
+                idle_time = bucket_info["idle_time"]
+
+                validation_average_time_spent = time_spent / count if count > 0 else None
+                working_session_average_time_spent = time_spent / working_sessions if working_sessions > 0 else None
+                average_idle_time = idle_time / count if count > 0 else None
+
+                grafana_formatted_item[f"{bucket}_count"] = count
+                grafana_formatted_item[f"{bucket}_time"] = validation_average_time_spent
+                grafana_formatted_item[f"{bucket}_session"] = working_session_average_time_spent
+                grafana_formatted_item[f"{bucket}_idle"] = average_idle_time
+            
+            grafana_formatted_result.append(grafana_formatted_item)
+        
+        return grafana_formatted_result
+                
