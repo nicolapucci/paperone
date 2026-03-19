@@ -146,6 +146,7 @@ def load_custom_field_mapper(session):
     return mapper
 
 class IssueRepository:
+    
 #metodo che restituisce il valore massimo nella colonna updated della tabella issue e che crea
 #una connessione temporanea al database locale
     @staticmethod
@@ -370,159 +371,7 @@ class IssueRepository:
                 logger.error(f"Error while upserting data: {e}")
                 session.rollback()
                 raise
-    #questo metodo conta mensilmente i bug originati sia dai clienti che non 
-    @staticmethod
-    def count_reported_bugs():
-
-        icf = aliased(IssueCustomField)
-        fv = aliased(FieldValue)
-        sv = aliased(StringValue)
-
-        type_exists = (
-            select(1)
-            .select_from(icf)
-            .join(sv, icf.id == sv.field_id)
-            .where(
-                icf.issue_id == Issue.id,
-                icf.name == "Type",
-                sv.value == "Bug",
-            )
-            .exists()
-        )
-
-        origine_exists = (
-            select(1)
-            .select_from(icf)
-            .join(sv, icf.value_id ==  sv.field_id)
-            .where(
-                icf.issue_id == Issue.id,
-                icf.name == "Origine",
-                sv.value == "Cliente"
-            )
-            .exists()
-        )
-
-        issue_month = func.date_trunc("month", Issue.created)
-        customer_bugs_stmt = (
-            select(issue_month.label("month"),func.count().label("count"))
-        ).select_from(Issue
-        ).where(type_exists,origine_exists
-        ).group_by(func.date_trunc("month",Issue.created)
-        ).order_by(func.date_trunc("month",Issue.created))
-
-        bugs_stmt = (
-            select(issue_month.label("month"),func.count().label("count"))
-        ).select_from(Issue
-        ).where(type_exists
-        ).group_by(func.date_trunc("month",Issue.created)
-        ).order_by(func.date_trunc("month",Issue.created))
-
-        with Session(engine) as session:
-            customer_reported_bugs = session.execute(customer_bugs_stmt).all()
-            bugs = session.execute(bugs_stmt).all()
-        
-        return customer_reported_bugs,bugs
-
-    #il metodo che segue conta mensilmente quanti bug sono stati riscontrati dai clienti e non
-    #raggruppandoli per prodotto
-    @staticmethod
-    def count_reported_bugs_group_by_product():
-
-        icf = aliased(IssueCustomField)
-        fv = aliased(FieldValue)
-        sv = aliased(StringValue)
-
-        type_exists = (
-            select(1)
-            .select_from(icf
-            ).join(sv, icf.value_id == sv.field_id
-            ).where(
-                icf.issue_id == Issue.id,
-                icf.name == "Type",
-                sv.value == "Bug",
-            )
-            .exists()
-        )
-
-        origine_exists = (
-            select(1)
-            .select_from(icf)
-            .join(sv, icf.value_id ==  sv.field_id)
-            .where(
-                icf.issue_id == Issue.id,
-                icf.name == "Origine",
-                sv.value == "Cliente"
-            )
-            .exists()
-        )
-
-        issue_month = func.date_trunc("month", Issue.created)
-        customer_bugs_stmt = (
-            select(issue_month.label("month"),sv.value,func.count().label("count"))
-        ).select_from(Issue
-        ).join(icf, Issue.id == icf.issue_id
-        ).join(sv, icf.value_id == sv.field_id
-        ).where(type_exists,origine_exists,icf.name == "Product"
-        ).group_by(func.date_trunc("month",Issue.created),sv.value
-        ).order_by(func.date_trunc("month",Issue.created))
-
-        bugs_stmt = (
-            select(issue_month.label("month"),sv.value,func.count().label("count"))
-        ).select_from(Issue
-        ).join(icf, Issue.id == icf.issue_id
-        ).join(sv, icf.value_id == sv.field_id
-        ).where(type_exists,icf.name == "Product"
-        ).group_by(func.date_trunc("month",Issue.created),sv.value
-        ).order_by(func.date_trunc("month",Issue.created))
-
-        with Session(engine) as session:
-            customer_reported_bugs = session.execute(customer_bugs_stmt).all()
-            bugs = session.execute(bugs_stmt).all()
-        
-        return customer_reported_bugs,bugs
-
-    #questo metodo calcola il defect rate, ossia il tasso in percentuale ottenuto dal rapporto tra
-    #bug riscontrati dai clienti e non su base mensile
-    @staticmethod
-    def defect_rate():
-        (customer_reported_bugs,bugs) = IssueRepository.count_reported_bugs()
-        customer_bugs_dict = {(month.timestamp()*1000):count for month,count in customer_reported_bugs}
-        (customer_reported_bugs_by_product,bugs_by_product) = IssueRepository.count_reported_bugs_group_by_product()
-        customer_bugs_dict_by_product = {}
-
-        for month,product,count in customer_reported_bugs_by_product:
-            month= month.timestamp()*1000
-            product = product if product else 'Unknown'
-            customer_bugs_dict_by_product[f"{month}{product}"] = count
-        
-        ratios = {}
-        for month,total_count in bugs:
-            month= month.timestamp()*1000
-            if total_count > 0:
-                customer_count = customer_bugs_dict.get(month,0)
-                
-                ratio = customer_count / total_count if total_count else 0
-                
-                if month not in ratios:
-                    ratios[month]= {}
-                ratios[month]['Total'] = ratio
-
-        for month,product,count in bugs_by_product:
-            month= month.timestamp()*1000
-            if count> 0:
-                product = product if product else 'Unknown'
-                customer_count = customer_bugs_dict_by_product.get(f"{month}{product}",0)
-
-                ratio = customer_count / count if total_count else 0
-
-                if month not in ratios:
-                    ratios[month] = {}
-
-                ratios[month][product]= ratio
-      
-        results = [{'date': key, 'values': value} for key, value in ratios.items()]
-        return results
-    
+   
     #questo metodo ricostruisce la vita di ogni singolo validation 
     @staticmethod
     def validation_changes():
@@ -855,33 +704,156 @@ class IssueRepository:
         
         return okr2,okr4
 
+    @staticmethod
+    def okr1():
+
+        i = aliased(Issue)
+        icf = aliased(IssueCustomField)
+        sv = aliased(StringValue)
+
+        bugs_cte = (
+            select(
+                i.id_readable,
+                i.id,
+                func.date_trunc('month',i.created).label('date')
+            )
+            .join(icf, icf.issue_id == i.id)
+            .join(sv, icf.value_id == sv.field_id)
+            .where(
+                icf.name == 'Type',
+                sv.value == 'Bug'
+            )
+        ).cte('bugs_cte')
+
+        bugs_by_Origine_cte = (
+            select(
+                bugs_cte.c.id_readable,
+                bugs_cte.c.id,
+                bugs_cte.c.date,
+                sv.value.label('origin')
+            )
+            .join(icf, icf.issue_id == bugs_cte.c.id)
+            .join(sv, icf.value_id == sv.field_id)
+            .where(icf.name == 'Origine')
+        )
+
+        bugs_by_Origine_and_Product_cte = (
+            select(
+                bugs_by_Origine_cte.c.id_readable,
+                bugs_by_Origine_cte.c.id,
+                bugs_by_Origine_cte.c.date,
+                bugs_by_Origine_cte.c.origin,
+                sv.value.label('product')
+            )
+            .join(icf, icf.issue_id == bugs_by_Origine_cte.c.id)
+            .join(sv, icf.value_id == sv.field_id)
+            .where(icf.name == 'Product')           
+        ).cte('bugs_by_Origine_and_Product_cte')
+
+
+        bugs_by_Origine_stmt = (
+            select(
+                bugs_by_Origine_cte.c.date,
+                bugs_by_Origine_cte.c.origin,
+                func.count().label('count')
+            )
+            .group_by(
+                bugs_by_Origine_cte.c.date,
+                bugs_by_Origine_cte.c.origin
+            )
+        )
+
+        bugs_by_Origine_and_Product_stmt = (
+            select(
+                bugs_by_Origine_and_Product_cte.c.date,
+                bugs_by_Origine_and_Product_cte.c.origin,
+                bugs_by_Origine_and_Product_cte.c.product,
+                func.count().label('count')
+            )
+            .group_by(
+                bugs_by_Origine_and_Product_cte.c.date,
+                bugs_by_Origine_and_Product_cte.c.product,
+                bugs_by_Origine_and_Product_cte.c.origin
+            )
+        )
+
+        with Session(engine) as session:
+            bugs_by_Origine_and_Product = session.execute(bugs_by_Origine_and_Product_stmt).fetchall()
+
+        bug_reports_by_date = {}
+
+        for date,origin,product,count in bugs_by_Origine_and_Product:
+
+            if date not in bug_reports_by_date.keys():
+                bug_reports_by_date[date] = {
+                    'tot': 0
+                }
+
+            bug_reports_by_date[date]['tot'] += count#accumulo tutti i bug
+
+            if origin not in bug_reports_by_date[date].keys():
+                bug_reports_by_date[date][origin] = {
+                    'tot':0
+                }
+            bug_reports_by_date[date][origin]['tot'] += count#accumulo tutti i bug segnalati da questa fonte
+
+            if product not in bug_reports_by_date[date][origin].items():
+                bug_reports_by_date[date][origin][product] = 0
+            
+            bug_reports_by_date[date][origin][product] += count#accumulo tutti i bug segnalati da questa fonte per questo prodotto
+
+        grafana_formatted_result = []
+
+        changelog_releases = ProductRepository.changelog_releases()
+
+        for date , bugs_by_origin_and_product in bug_reports_by_date.items():
+            if isinstance(bugs_by_origin_and_product,dict):
+                customer_bugs = bugs_by_origin_and_product['Cliente']['tot'] if 'Cliente' in bugs_by_origin_and_product.keys() else 0
+                grafana_formatted_item = {
+                    "date":date,
+                    "Customer Bugs":customer_bugs,
+                    "Company Bugs":bugs_by_origin_and_product['tot'],
+                    "Defect Rate":customer_bugs / bugs_by_origin_and_product['tot'] if bugs_by_origin_and_product['tot'] > 0 else None,
+                    "FW Released": None if (date.year, date.month) in [(d.year, d.month) for d in changelog_releases.values()] else 1
+                }
+
+                for origin, products in bugs_by_origin_and_product.items():
+                    if isinstance(products,dict):
+                        for product, count in products.items():
+
+                            if product != 'tot':
+
+                                product_ratio = count / bugs_by_origin_and_product['tot']
+
+                                grafana_formatted_item[f"{origin}-{product}-ratio"] = product_ratio
+
+                grafana_formatted_result.append(grafana_formatted_item)
+        
+        return grafana_formatted_result
+            
     #questo metodo restituisce i dati dell'OKR 2 nella maniera più rapida possibile 
-    def okr2_stat():
+    def okr2():
 
         data = get_okr2_data()
         if data:
             return data
 
-        okr2,okr4 = IssueRepository.validation_stats()
+        okr2_data,okr4_data = IssueRepository.validation_stats()
 
-        set_okr2_data(okr2)
-        set_okr4_data(okr4)
+        set_okr2_data(okr2_data)
+        set_okr4_data(okr4_data)
 
         return okr2
 
-    #questo metodo uguale al precedente restituisce i dati dell'OKR 4 nella maniera più rapida 
-    #possibile
-    def okr4_stat():
+    #questo metodo uguale al precedente restituisce i dati dell'OKR 4 nella maniera più rapida possibile
+    def okr4():
         data = get_okr4_data()
         if data:
             return data
 
-        okr2,okr4 = IssueRepository.validation_stats()
+        okr2_data,okr4_data = IssueRepository.validation_stats()
 
-        set_okr2_data(okr2)
-        set_okr4_data(okr4)
+        set_okr2_data(okr2_data)
+        set_okr4_data(okr4_data)
 
-        return okr4
-        
-if __name__ =='__main__':
-    print(IssueRepository.prova())
+        return okr4_data

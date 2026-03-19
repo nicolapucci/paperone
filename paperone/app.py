@@ -17,22 +17,22 @@ Base.metadata.create_all(engine)
     #subprocess.Popen(["python", "-m", "youtrack.youTrack"])
     #TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
 
-@app.get('/defect-rate')
-def defect_rate():
-    return IssueRepository.defect_rate()
+@app.get('/okr1')
+def OKR1():
+    return IssueRepository.okr1()
+
+@app.get('/okr2')
+def OKR2():
+    okr2 = IssueRepository.okr2()
+    return okr2
 
 @app.get('/test-over-fte')
 def fte():
     return TestRepository.test_over_fte()
 
-@app.get('/okr2')
-def OKR2():
-    okr2 = IssueRepository.okr2_stat()
-    return okr2
-
 @app.get('/okr4')
 def OKR4():
-    okr4 = IssueRepository.okr4_stat()
+    okr4 = IssueRepository.okr4()
     return okr4
 
 
