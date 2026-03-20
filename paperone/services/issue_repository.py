@@ -410,6 +410,14 @@ class IssueRepository:
             )
         ).cte('completions_cte')
 
+        last_set_as_done_cte = (
+            select(
+                completions_cte.c.id_readable,
+                func.max(completions_cte.c.timestamp).label("last_set_as_done")
+            )
+            .group_by(completions_cte.c.id_readable)
+        ).cte("last_set_as_done_cte")
+
 
         assignements_cte = (
             select(
@@ -423,6 +431,14 @@ class IssueRepository:
                 validation_changes_cte.c.custom_field_value.in_(TCoE_MEMBERS) 
             )
         ).cte('assignements_cte')
+
+        first_assignements_to_TCoE_cte = (
+            select(
+                assignements_cte.c.id_readable,
+                func.min(assignements_cte.c.timestamp).label('first_assigned_to_TCoE')
+            )
+            .group_by(assignements_cte.c.id_readable)
+        ).cte('first_assignements_to_TCoE_cte')
 
         latest_assignment_subq = (
             select(
@@ -539,6 +555,7 @@ class IssueRepository:
         ).cte('parent')
 
 
+
         stmt = (
             select(
                 supposed_working_sessions_cte.c.id_readable,
@@ -548,9 +565,13 @@ class IssueRepository:
                 supposed_working_sessions_cte.c.assignee,
                 supposed_working_sessions_cte.c.previous_session_stop_ts,
                 supposed_working_sessions_cte.c.in_progress_ts,
+                first_assignements_to_TCoE_cte.c.first_assigned_to_TCoE,
+                last_set_as_done_cte.c.last_set_as_done,
                 parent.c.value.label('fix_version'),
             )
             .join(parent, supposed_working_sessions_cte.c.parent_id == parent.c.id_readable)
+            .join(first_assignements_to_TCoE_cte, first_assignements_to_TCoE_cte.c.id_readable == supposed_working_sessions_cte.c.id_readable)
+            .join(last_set_as_done_cte,last_set_as_done_cte.c.id_readable == supposed_working_sessions_cte.c.id_readable)
             #.where(supposed_working_sessions_cte.c.assignee == 'Simona rossi' , parent.c.value == '4.19.0')
 
         )
@@ -560,149 +581,6 @@ class IssueRepository:
 
         return result
 
-    #all'interno di questo metodo vengono raggruppati i validation per bucket, calcolati i tempi
-    #effettivi di lavorazione e d'attesa in mano al TCoE, viene calcolata la durata totale della
-    #fase di test, la durata media di una fase di test per bucket, il tempo d'inattività medio e la 
-    #media mobile
-    @staticmethod
-    def validation_stats():
-
-        validation_data = IssueRepository.validation_changes()
-
-        rc0_releases = ProductRepository.rc0_releases()
-        changelog_releases = ProductRepository.changelog_releases()
-
-        buckets = {}
-
-
-        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,fix_version in validation_data:
-            
-            if fix_version in rc0_releases.keys():
-                if fix_version not in buckets.keys():
-                    
-                    buckets[fix_version] = {
-                        "pre":{
-                            "session_count":0,
-                            "time_spent":timedelta(0),
-                            "idle_time": timedelta(0)
-                        },
-                        "during":{
-                            "session_count":0,
-                            "time_spent":timedelta(0),
-                            "idle_time": timedelta(0)
-                        },
-                        "slipped":{
-                            "session_count":0,
-                            "time_spent":timedelta(0),
-                            "idle_time": timedelta(0)
-                        },
-                        "global":{
-                            "session_count":0,
-                            "time_spent":timedelta(0),
-                            "idle_time": timedelta(0)
-                        },
-                        "team_members":[]
-                    }
-                
-                if assignee not in buckets[fix_version]["team_members"]:
-                    buckets[fix_version]["team_members"].append(assignee)
-
-                working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts,in_progress_ts] if date is not None)
-
-                idle_time = working_hours_only_timedelta(working_session_start , assigned_ts)
-
-                rc0_release = convert_to_timezone_aware(rc0_releases[fix_version])
-
-
-                if working_session_start < rc0_release and stop_ts > rc0_release:
-                    pre_fw_session_chunk = working_hours_only_timedelta(rc0_release,working_session_start)
-                    during_fw_session_chunk = working_hours_only_timedelta(stop_ts,rc0_release)
-
-                    session_duration = pre_fw_session_chunk + during_fw_session_chunk
-
-                    buckets[fix_version]["pre"]["session_count"] += 1
-                    buckets[fix_version]["slipped"]["session_count"] += 1
-                    buckets[fix_version]["pre"]["time_spent"] += pre_fw_session_chunk
-                    buckets[fix_version]["slipped"]["time_spent"] += during_fw_session_chunk
-                    buckets[fix_version]["pre"]["idle_time"] += idle_time
-
-                else:
-                    bucket = 'pre' if stop_ts < rc0_release else 'during'  if assigned_ts > rc0_release else 'slipped'
-                    
-                    #logger.debug(f"logging in {bucket}-- {stop_ts} | {rc0_release} | {working_session_start}")
-
-                    session_duration = working_hours_only_timedelta(stop_ts , working_session_start)
-
-                    buckets[fix_version][bucket]["session_count"] += 1
-                    buckets[fix_version][bucket]["time_spent"] += session_duration
-                    buckets[fix_version][bucket]["idle_time"] += idle_time
-                
-                buckets[fix_version]['global']['session_count'] +=1
-                buckets[fix_version]['global']['time_spent'] += session_duration
-                buckets[fix_version]['global']['idle_time'] += idle_time
-        okr2 = []
-        okr4 = []
-
-        for version, value in buckets.items():
-
-            test_phase_end = changelog_releases[version] if version in changelog_releases.keys() else rc0_releases[version]
-
-            team_members = value.get('team_members',[])
-            members_count = len(team_members)
-
-            test_phase_start = rc0_releases[version] if version in rc0_releases.keys() else changelog_releases[version]
-
-            test_phase_duration = working_hours_only_timedelta(test_phase_end,test_phase_start)
-
-            test_phase_working_time = test_phase_duration * members_count #approssimo tutti i membri a full time
-
-            during_time_partition = value["during"]["time_spent"] / test_phase_working_time if test_phase_working_time != timedelta(0) else 0
-            slipped_time_partition = value["slipped"]["time_spent"] / test_phase_working_time if test_phase_working_time != timedelta(0) else 0
-
-            test_time_partition_estimate = 1 - (during_time_partition + slipped_time_partition)
-
-            okr2.append({
-                    "version":version,
-                    "date": test_phase_end,
-                    "during":during_time_partition,
-                    "slipped":slipped_time_partition,
-                    "test":test_time_partition_estimate,
-                    "duration":test_phase_duration * 3,
-                    "raw_duration": test_phase_end - test_phase_start
-                })
-            
-
-            okr4_item = {
-                "version":version,
-                "date": test_phase_end,
-            }
-
-            for bucket, data in value.items():
-                if isinstance(data,dict) and data["session_count"]>WORKING_SESSION_TRESHOLD: 
-                    okr4_item[f"{bucket}_duration"] = data["time_spent"] / data["session_count"] if data["session_count"] != 0 else 0
-                    okr4_item[f"{bucket}_idle_duration"] = data["idle_time"] / data["session_count"] if data["session_count"]  != 0 else 0 
-
-            okr4.append(okr4_item)
-
-        for phase in okr2:
-            date = phase.get('date',None)
-            version = phase.get('version',None)
-
-            previous_releases_count = 0
-            previous_releases_duration = timedelta(0)
-            for other_phase in okr2:
-                other_date = other_phase.get('date',None)
-                other_version = other_phase.get('version',None)
-                other_date_duration = other_phase.get('duration')
-
-
-                time_diff = date - other_date
-                if time_diff > timedelta(0) and time_diff < ITERVALLO_MEDIA_MOBILE:
-                    previous_releases_duration += other_date_duration
-                    previous_releases_count += 1
-            phase['average_previous_phase_duration'] = previous_releases_duration / previous_releases_count if previous_releases_count != 0 else 0
-        
-        return okr2,okr4
 
     @staticmethod
     def okr1():
@@ -830,39 +708,150 @@ class IssueRepository:
                 grafana_formatted_result.append(grafana_formatted_item)
         
         return grafana_formatted_result
-            
-    #questo metodo restituisce i dati dell'OKR 2 nella maniera più rapida possibile
-    @staticmethod 
+
+    #all'interno di questo metodo vengono raggruppati i validation per bucket, calcolati i tempi
+    #effettivi di lavorazione e d'attesa in mano al TCoE, viene calcolata la durata totale della
+    #fase di test, la durata media di una fase di test per bucket, il tempo d'inattività medio e la 
+    #media mobile
+    @staticmethod
     def okr2():
 
         data = get_okr2_data()
         if data:
             return data
 
-        okr2_data,okr4_data = IssueRepository.validation_stats()
+        validation_data = IssueRepository.validation_changes()
 
+        rc0_releases = ProductRepository.rc0_releases()
+        changelog_releases = ProductRepository.changelog_releases()
+
+        buckets = {}
+
+
+        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,first_assigned_to_TCoE,last_set_as_done,fix_version in validation_data:
+            if fix_version in rc0_releases.keys():
+                if fix_version not in buckets.keys():
+                    
+                    buckets[fix_version] = {
+                        "pre":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
+                        "during":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
+                        "slipped":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
+                        "global":{
+                            "session_count":0,
+                            "time_spent":timedelta(0),
+                            "idle_time": timedelta(0)
+                        },
+                        "team_members":[]
+                    }
+                
+                if assignee not in buckets[fix_version]["team_members"]:
+                    buckets[fix_version]["team_members"].append(assignee)
+
+                working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts,in_progress_ts] if date is not None)
+
+                idle_time = working_hours_only_timedelta(working_session_start , assigned_ts)
+
+                rc0_release = convert_to_timezone_aware(rc0_releases[fix_version])
+
+
+                if working_session_start < rc0_release and stop_ts > rc0_release:
+                    pre_fw_session_chunk = working_hours_only_timedelta(rc0_release,working_session_start)
+                    during_fw_session_chunk = working_hours_only_timedelta(stop_ts,rc0_release)
+
+                    session_duration = pre_fw_session_chunk + during_fw_session_chunk
+
+                    buckets[fix_version]["pre"]["session_count"] += 1
+                    buckets[fix_version]["slipped"]["session_count"] += 1
+                    buckets[fix_version]["pre"]["time_spent"] += pre_fw_session_chunk
+                    buckets[fix_version]["slipped"]["time_spent"] += during_fw_session_chunk
+                    buckets[fix_version]["pre"]["idle_time"] += idle_time
+
+                else:
+                    bucket = 'pre' if stop_ts < rc0_release else 'during'  if assigned_ts > rc0_release else 'slipped'
+                    
+                    #logger.debug(f"logging in {bucket}-- {stop_ts} | {rc0_release} | {working_session_start}")
+
+                    session_duration = working_hours_only_timedelta(stop_ts , working_session_start)
+
+                    buckets[fix_version][bucket]["session_count"] += 1
+                    buckets[fix_version][bucket]["time_spent"] += session_duration
+                    buckets[fix_version][bucket]["idle_time"] += idle_time
+                
+                buckets[fix_version]['global']['session_count'] +=1
+                buckets[fix_version]['global']['time_spent'] += session_duration
+                buckets[fix_version]['global']['idle_time'] += idle_time
+
+        okr2_data = []
+
+        for version, value in buckets.items():
+            print(f"parsing {version}")
+
+            test_phase_end = changelog_releases[version] if version in changelog_releases.keys() else rc0_releases[version]
+
+            team_members = value.get('team_members',[])
+            members_count = len(team_members)
+
+            test_phase_start = rc0_releases[version] if version in rc0_releases.keys() else changelog_releases[version]
+
+            test_phase_duration = working_hours_only_timedelta(test_phase_end,test_phase_start)
+
+            test_phase_working_time = test_phase_duration * members_count #approssimo tutti i membri a full time
+
+            during_time_partition = value["during"]["time_spent"] / test_phase_working_time if test_phase_working_time != timedelta(0) else 0
+            slipped_time_partition = value["slipped"]["time_spent"] / test_phase_working_time if test_phase_working_time != timedelta(0) else 0
+
+            test_time_partition_estimate = 1 - (during_time_partition + slipped_time_partition)
+
+            okr2_data.append({
+                    "version":version,
+                    "date": test_phase_end,
+                    "during":during_time_partition,
+                    "slipped":slipped_time_partition,
+                    "test":test_time_partition_estimate,
+                    "duration":test_phase_duration * 3,
+                    "raw_duration": test_phase_end - test_phase_start
+                })
+            
+        for phase in okr2_data:
+            date = phase.get('date',None)
+            version = phase.get('version',None)
+
+            previous_releases_count = 0
+            previous_releases_duration = timedelta(0)
+            for other_phase in okr2_data:
+                other_date = other_phase.get('date',None)
+                other_version = other_phase.get('version',None)
+                other_date_duration = other_phase.get('duration')
+
+
+                time_diff = date - other_date
+                if time_diff > timedelta(0) and time_diff < ITERVALLO_MEDIA_MOBILE:
+                    previous_releases_duration += other_date_duration
+                    previous_releases_count += 1
+            phase['average_previous_phase_duration'] = previous_releases_duration / previous_releases_count if previous_releases_count != 0 else 0
+        
         set_okr2_data(okr2_data)
-        set_okr4_data(okr4_data)
 
-        return okr2
-
-    #questo metodo uguale al precedente restituisce i dati dell'OKR 4 nella maniera più rapida possibile
+        return okr2_data
+            
     @staticmethod
     def okr4():
+        
         data = get_okr4_data()
         if data:
             return data
-
-        okr2_data,okr4_data = IssueRepository.validation_stats()
-
-        set_okr2_data(okr2_data)
-        set_okr4_data(okr4_data)
-
-        return okr4_data
-
-    @staticmethod
-    def prova_rework_validation_stats():
-
         validation_data = IssueRepository.validation_changes()
 
         rc0_releases = ProductRepository.rc0_releases()
@@ -870,8 +859,7 @@ class IssueRepository:
 
         validations = {}
 
-
-        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,fix_version in validation_data:
+        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,first_assigned_to_TCoE,last_set_as_done,fix_version in validation_data:
             if fix_version in rc0_releases.keys():
                 rc0_release = convert_to_timezone_aware(rc0_releases[fix_version])
                 assigned_ts = convert_to_timezone_aware(assigned_ts)
@@ -881,8 +869,8 @@ class IssueRepository:
                 
                 if id_readable not in validations.keys():
                     validations[id_readable] = {
-                        "first_assigned_to_TCoE":assigned_ts,
-                        "last_set_as_Done":stop_ts,
+                        "first_assigned_to_TCoE":first_assigned_to_TCoE,
+                        "last_set_as_Done":last_set_as_done,
                         "fix_version":fix_version,
                         "time_spent":timedelta(0),
                         "idle_time":timedelta(0),
@@ -890,11 +878,6 @@ class IssueRepository:
                     }
 
 
-
-                #tmp solution because we don't have a first_assigned_to_TCoE and last_set_as_Done yet
-                validations[id_readable]["first_assigned_to_TCoE"] = assigned_ts if assigned_ts < validations[id_readable]["first_assigned_to_TCoE"] else validations[id_readable]["first_assigned_to_TCoE"]
-                validations[id_readable]["last_set_as_Done"] = stop_ts if stop_ts < validations[id_readable]["last_set_as_Done"] else validations[id_readable]["last_set_as_Done"]
-                
                 working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts,in_progress_ts] if date is not None)
                 
                 validations[id_readable]["time_spent"] += working_hours_only_timedelta(stop_ts,working_session_start)
@@ -950,11 +933,11 @@ class IssueRepository:
                 fix_versions_dict[fix_version]["tot"]["idle_time"] += validation_info["idle_time"]
 
 
-        grafana_formatted_result = []
+        okr4_data = []
 
         for fix_version, version_info in fix_versions_dict.items():
             grafana_formatted_item = {
-                "date": rc0_releases[fix_version],
+                "date": changelog_releases[fix_version] if fix_version in changelog_releases.keys() else rc0_releases[fix_version],
                 "Fix Version": fix_version,
             }
 
@@ -974,7 +957,8 @@ class IssueRepository:
                 grafana_formatted_item[f"{bucket}_session"] = working_session_average_time_spent
                 grafana_formatted_item[f"{bucket}_idle"] = average_idle_time
             
-            grafana_formatted_result.append(grafana_formatted_item)
+            okr4_data.append(grafana_formatted_item)
         
-        return grafana_formatted_result
-                
+        set_okr4_data(okr4_data)
+
+        return okr4_data
