@@ -23,8 +23,7 @@ def OKR1():
 
 @app.get('/okr2')
 def OKR2():
-    okr2 = IssueRepository.okr2()
-    return okr2
+    return IssueRepository.okr2()
 
 @app.get('/test-over-fte')
 def fte():
@@ -32,8 +31,9 @@ def fte():
 
 @app.get('/okr4')
 def OKR4():
-    okr4 = IssueRepository.okr4()
-    return okr4
+    return IssueRepository.okr4()
+
+
 
 
 if __name__ == '__main__':

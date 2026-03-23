@@ -35,6 +35,8 @@ def set_changelog_releases(releases:dict):
 
 def get_okr2_data():
     raw_data = redis_client.get('okr2')
+    if not raw_data:
+        return None
     data = json.loads(raw_data)
     for item in data:
         for k,v in item.items():
