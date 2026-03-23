@@ -536,9 +536,9 @@ class IssueRepository:
 
         for assignee, sessions in sessions_by_assignee.items():
 
-            sessions.sort(key=lambda x: x[1])
+            sessions.sort(key=lambda x: x[1])#ordino le tuple per stop_ts
 
-            timestamps = [s[1] for s in sessions]
+            timestamps = [s[1] for s in sessions]#prendo solo i timestamp di stop_ts ordinati
 
             previous_session_stop_ts = None
 
@@ -546,18 +546,17 @@ class IssueRepository:
                 if s[2] is None:
                     queue = 0
                 else:
+                    #ricavo quanti elementi sono compresi tra assigned e stop_ts
                     left = bisect.bisect_right(timestamps, s[2])
 
                     right = bisect.bisect_left(timestamps, s[1])
 
                     queue = right - left
                     
-
                 result.append(tuple(s) + (queue,previous_session_stop_ts,))
-
+                
+                #setto lo stop_ts di questa sessione come previous_stop_ts della prossima
                 previous_session_stop_ts = s[1]
-
-
 
         return result
 
@@ -829,9 +828,11 @@ class IssueRepository:
     @staticmethod
     def okr4():
         
+        #quick redis check
         data = get_okr4_data()
         if data:
             return data
+
         validation_data = IssueRepository.validation_changes()
 
         rc0_releases = ProductRepository.rc0_releases()
@@ -865,10 +866,11 @@ class IssueRepository:
                         validations[id_readable]["working_sessions"] += 1
                         validations[id_readable]["queue"] += queue
 
-                        if assigned_ts < rc0_release and stop_ts > rc0_release:
+                        if assigned_ts < rc0_release and stop_ts > rc0_release:#se la working session è a cavallo dell'rc0 è slipped al TCoE
                             validations[id_readable]['bucket'] = 'slipped_to_TCoE'
 
 
+            #uso questo dict per creare la divisione in fw release e buckets
             fix_versions_dict = {}
             for id_readable,validation_info in validations.items():
 
@@ -894,7 +896,7 @@ class IssueRepository:
                     elif start > rc0_release and end > rc0_release:
                         bucket = 'during'
                     else:
-                        bucket = 'slipped_not_to_TCoE'
+                        bucket = 'slipped_not_to_TCoE'#nel caso sia uno slipped ma nessuna sessione sia imputabile al TCoE
 
                 if bucket not in fix_versions_dict[fix_version].keys():
                     fix_versions_dict[fix_version][bucket] = {
@@ -926,6 +928,7 @@ class IssueRepository:
                 "Fix Version": fix_version,
             }
 
+            #calcolo le medie e formatto il risultato per essere facilmente usabile in grafana
             for bucket, bucket_info in version_info.items():
                 
                 count = bucket_info['count']
@@ -946,7 +949,9 @@ class IssueRepository:
             
             okr4_data.append(grafana_formatted_item)
         
+        #cache results
         set_okr4_data(okr4_data)
+    
 
         return okr4_data
 
