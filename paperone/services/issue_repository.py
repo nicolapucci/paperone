@@ -2,6 +2,7 @@ from sqlalchemy import (
     select,
     exists,
     and_ ,
+    or_,
     func,
     case,
     desc,
@@ -51,6 +52,8 @@ from services.redis_client import(
     set_okr4_data,
     get_okr4_data
 )
+from collections import defaultdict
+import bisect
 
 """
     issue_repository è una classe dichiarata che contiene due grandi funzionalità:
@@ -448,7 +451,7 @@ class IssueRepository:
             )
             .where(
                 assignements_cte.c.id_readable == completions_cte.c.id_readable,
-                assignements_cte.c.timestamp <= completions_cte.c.timestamp
+                assignements_cte.c.timestamp < completions_cte.c.timestamp
             )
             .group_by(assignements_cte.c.id_readable,completions_cte.c.timestamp)
         ).cte('latest_assignment_subq')
@@ -480,68 +483,12 @@ class IssueRepository:
             .join(latest_assignment_with_assignee_cte, and_(
                 completions_cte.c.id_readable == latest_assignment_with_assignee_cte.c.id_readable,
                 completions_cte.c.timestamp == latest_assignment_with_assignee_cte.c.timestamp
-            ))
+            ),isouter=True)
         ).cte('working_sessions_cte')
 
-        progress_cte = (
-            select(
-                validation_changes_cte.c.id_readable,
-                validation_changes_cte.c.timestamp,
-            )
-            .where(
-                validation_changes_cte.c.custom_field_name == 'Stage',
-                validation_changes_cte.c.custom_field_value == 'In Progress'
-            )
-        ).cte('progress_cte')
 
-        working_sessions_including_is_progress_changes_cte = (
-            select(
-                working_sessions_cte.c.id_readable,
-                working_sessions_cte.c.parent_id,
-                working_sessions_cte.c.timestamp,
-                working_sessions_cte.c.custom_field_value,
-                working_sessions_cte.c.assignee,
-                working_sessions_cte.c.assigned_ts,
-                func.max(progress_cte.c.timestamp).label('in_progress_ts')
-            )
-            .join(progress_cte, working_sessions_cte.c.id_readable == progress_cte.c.id_readable)
-            .where(working_sessions_cte.c.timestamp > progress_cte.c.timestamp)
-            .group_by(
-                working_sessions_cte.c.id_readable,
-                working_sessions_cte.c.parent_id,
-                working_sessions_cte.c.timestamp,
-                working_sessions_cte.c.custom_field_value,
-                working_sessions_cte.c.assignee,
-                working_sessions_cte.c.assigned_ts     
-            )
-        ).cte('working_sessions_including_is_progress_changes_cte')
-
-        current_session = aliased(working_sessions_including_is_progress_changes_cte)
-        previous_sessions = aliased(working_sessions_including_is_progress_changes_cte)
-
-        supposed_working_sessions_cte = (
-            select(
-                current_session.c.id_readable,
-                current_session.c.parent_id,
-                current_session.c.timestamp,
-                current_session.c.custom_field_value,
-                current_session.c.assignee,
-                current_session.c.assigned_ts,
-                current_session.c.in_progress_ts,
-                func.max(previous_sessions.c.timestamp).label('previous_session_stop_ts')
-            )
-            .join(previous_sessions, current_session.c.assignee == previous_sessions.c.assignee)
-            .where(previous_sessions.c.timestamp < current_session.c.timestamp)
-            .group_by(
-                current_session.c.id_readable,
-                current_session.c.parent_id,
-                current_session.c.timestamp,
-                current_session.c.custom_field_value,
-                current_session.c.assignee,
-                current_session.c.assigned_ts,
-                current_session.c.in_progress_ts
-            )
-        ).cte('supposed_working_sessions_cte')
+        current_session = aliased(working_sessions_cte)
+        previous_sessions = aliased(working_sessions_cte)
 
 
         parent = (
@@ -555,29 +502,62 @@ class IssueRepository:
         ).cte('parent')
 
 
-
         stmt = (
             select(
-                supposed_working_sessions_cte.c.id_readable,
-                supposed_working_sessions_cte.c.timestamp.label('stop_ts'),
-                supposed_working_sessions_cte.c.assigned_ts,
-                supposed_working_sessions_cte.c.custom_field_value,
-                supposed_working_sessions_cte.c.assignee,
-                supposed_working_sessions_cte.c.previous_session_stop_ts,
-                supposed_working_sessions_cte.c.in_progress_ts,
+                working_sessions_cte.c.id_readable,
+                working_sessions_cte.c.timestamp.label('stop_ts'),
+                working_sessions_cte.c.assigned_ts,
+                working_sessions_cte.c.custom_field_value,
+                working_sessions_cte.c.assignee,
                 first_assignements_to_TCoE_cte.c.first_assigned_to_TCoE,
                 last_set_as_done_cte.c.last_set_as_done,
-                parent.c.value.label('fix_version'),
+                parent.c.value.label('fix_version')
             )
-            .join(parent, supposed_working_sessions_cte.c.parent_id == parent.c.id_readable)
-            .join(first_assignements_to_TCoE_cte, first_assignements_to_TCoE_cte.c.id_readable == supposed_working_sessions_cte.c.id_readable)
-            .join(last_set_as_done_cte,last_set_as_done_cte.c.id_readable == supposed_working_sessions_cte.c.id_readable)
-            #.where(supposed_working_sessions_cte.c.assignee == 'Simona rossi' , parent.c.value == '4.19.0')
+            .join(parent, working_sessions_cte.c.parent_id == parent.c.id_readable, isouter=True)
+            .join(first_assignements_to_TCoE_cte, first_assignements_to_TCoE_cte.c.id_readable == working_sessions_cte.c.id_readable)
+            .join(last_set_as_done_cte,last_set_as_done_cte.c.id_readable == working_sessions_cte.c.id_readable,isouter=True)
+
+            #.where(working_sessions_cte.c.assignee == 'Simona rossi' , parent.c.value == '4.19.0')
 
         )
-
         with Session(engine) as session:
-            result = session.execute(stmt).fetchall()
+            rows = session.execute(stmt).fetchall()
+            logger.debug(f"working_sessions: {len(rows)}")
+
+
+
+        sessions_by_assignee = defaultdict(list)
+
+        for row in rows:
+            assignee = row[4]
+            sessions_by_assignee[assignee].append(row)
+
+        result = []
+
+        for assignee, sessions in sessions_by_assignee.items():
+
+            sessions.sort(key=lambda x: x[1])
+
+            timestamps = [s[1] for s in sessions]
+
+            previous_session_stop_ts = None
+
+            for s in sessions:
+                if s[2] is None:
+                    queue = 0
+                else:
+                    left = bisect.bisect_right(timestamps, s[2])
+
+                    right = bisect.bisect_left(timestamps, s[1])
+
+                    queue = right - left
+                    
+
+                result.append(tuple(s) + (queue,previous_session_stop_ts,))
+
+                previous_session_stop_ts = s[1]
+
+
 
         return result
 
@@ -728,7 +708,7 @@ class IssueRepository:
         buckets = {}
 
 
-        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,first_assigned_to_TCoE,last_set_as_done,fix_version in validation_data:
+        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,first_assigned_to_TCoE,last_set_as_done,fix_version,queue,previous_session_stop_ts in validation_data:
             if fix_version in rc0_releases.keys():
                 if fix_version not in buckets.keys():
                     
@@ -759,7 +739,7 @@ class IssueRepository:
                 if assignee not in buckets[fix_version]["team_members"]:
                     buckets[fix_version]["team_members"].append(assignee)
 
-                working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts,in_progress_ts] if date is not None)
+                working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts] if date is not None)
 
                 idle_time = working_hours_only_timedelta(working_session_start , assigned_ts)
 
@@ -859,13 +839,12 @@ class IssueRepository:
 
         validations = {}
 
-        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,previous_session_stop_ts,in_progress_ts,first_assigned_to_TCoE,last_set_as_done,fix_version in validation_data:
+        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,first_assigned_to_TCoE,last_set_as_done,fix_version,queue,previous_session_stop_ts in validation_data:
             if fix_version in rc0_releases.keys():
                 rc0_release = convert_to_timezone_aware(rc0_releases[fix_version])
-                assigned_ts = convert_to_timezone_aware(assigned_ts)
-                stop_ts = convert_to_timezone_aware(stop_ts)
-                previous_session_stop_ts = convert_to_timezone_aware(previous_session_stop_ts)
-                in_progress_ts = convert_to_timezone_aware(in_progress_ts)
+                assigned_ts = convert_to_timezone_aware(assigned_ts) if assigned_ts else None
+                stop_ts = convert_to_timezone_aware(stop_ts) if stop_ts else None
+                previous_session_stop_ts = convert_to_timezone_aware(previous_session_stop_ts) if previous_session_stop_ts else None
                 
                 if id_readable not in validations.keys():
                     validations[id_readable] = {
@@ -874,18 +853,20 @@ class IssueRepository:
                         "fix_version":fix_version,
                         "time_spent":timedelta(0),
                         "idle_time":timedelta(0),
-                        "working_sessions":0
+                        "working_sessions":0,
+                        "queue":0
                     }
 
+                if assigned_ts is not None:
+                    working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts] if date is not None)
+                    if working_session_start and stop_ts:
+                        validations[id_readable]["time_spent"] += working_hours_only_timedelta(stop_ts,working_session_start)
+                        validations[id_readable]["idle_time"] += working_hours_only_timedelta(working_session_start,assigned_ts)
+                        validations[id_readable]["working_sessions"] += 1
+                        validations[id_readable]["queue"] += queue
 
-                working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts,in_progress_ts] if date is not None)
-                
-                validations[id_readable]["time_spent"] += working_hours_only_timedelta(stop_ts,working_session_start)
-                validations[id_readable]["idle_time"] += working_hours_only_timedelta(working_session_start,assigned_ts)
-                validations[id_readable]["working_sessions"] += 1
-
-                if assigned_ts < rc0_release and stop_ts > rc0_release:
-                    validations[id_readable]['bucket'] = 'slipped_to_TCoE'
+                        if assigned_ts < rc0_release and stop_ts > rc0_release:
+                            validations[id_readable]['bucket'] = 'slipped_to_TCoE'
 
 
             fix_versions_dict = {}
@@ -899,7 +880,8 @@ class IssueRepository:
                         "count":0,
                         "time_spent":timedelta(0),
                         "working_sessions":0,
-                        "idle_time":timedelta(0)
+                        "idle_time":timedelta(0),
+                        "queue":0
                         }}
                 
                 bucket = validation_info.get('bucket',None)
@@ -919,18 +901,21 @@ class IssueRepository:
                         "count":0,
                         "time_spent":timedelta(0),
                         "working_sessions":0,
-                        "idle_time":timedelta(0)
+                        "idle_time":timedelta(0),
+                        "queue":0
                         }
 
                 fix_versions_dict[fix_version][bucket]["count"] += 1
                 fix_versions_dict[fix_version][bucket]["working_sessions"] += validation_info["working_sessions"]
                 fix_versions_dict[fix_version][bucket]["time_spent"] += validation_info["time_spent"]
                 fix_versions_dict[fix_version][bucket]["idle_time"] += validation_info["idle_time"]
+                fix_versions_dict[fix_version][bucket]["queue"] += validation_info["queue"]
 
                 fix_versions_dict[fix_version]["tot"]["count"] += 1
                 fix_versions_dict[fix_version]["tot"]["working_sessions"] += validation_info["working_sessions"]
                 fix_versions_dict[fix_version]["tot"]["time_spent"] += validation_info["time_spent"]
                 fix_versions_dict[fix_version]["tot"]["idle_time"] += validation_info["idle_time"]
+                fix_versions_dict[fix_version]["tot"]["queue"] += validation_info["queue"]
 
 
         okr4_data = []
@@ -951,14 +936,18 @@ class IssueRepository:
                 validation_average_time_spent = time_spent / count if count > 0 else None
                 working_session_average_time_spent = time_spent / working_sessions if working_sessions > 0 else None
                 average_idle_time = idle_time / count if count > 0 else None
+                average_queue_count = bucket_info["queue"] / count if count > 0 else None
 
                 grafana_formatted_item[f"{bucket}_count"] = count
                 grafana_formatted_item[f"{bucket}_time"] = validation_average_time_spent
                 grafana_formatted_item[f"{bucket}_session"] = working_session_average_time_spent
                 grafana_formatted_item[f"{bucket}_idle"] = average_idle_time
+                grafana_formatted_item[f"{bucket}_queue"] = average_queue_count
             
             okr4_data.append(grafana_formatted_item)
         
         set_okr4_data(okr4_data)
 
         return okr4_data
+
+
