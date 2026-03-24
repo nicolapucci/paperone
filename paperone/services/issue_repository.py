@@ -300,13 +300,24 @@ class IssueRepository:
                 .values(field_value_rows)
                 .returning('*') 
             )
-
+            data = []
+            for item in items:
+                obj = get_value_obj(item, uuid)
+                if obj:
+                    data.append({
+                        "type": obj.type,
+                        "value": getattr(obj, "value"),
+                        "field_id": obj.field_id
+                    })
+                    
             with Session(engine) as session:
                 try:
 
                     session.execute(insert(FieldValue).values(field_value_rows))
 
-                    session.add_all(value_rows)
+
+                    # bulk insert nella tabella base
+                    session.bulk_insert_mappings(Value, data)
     
 
                     issue_inserted = session.execute(upsert_issues_stmt).fetchall()
