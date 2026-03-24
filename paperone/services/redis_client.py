@@ -18,6 +18,15 @@ def set_youtrack_last_sync():
     redis_client.set('youtrack_sync_timestamp',now)
 
 
+def get_custom_field_id_mapper():
+    mapper = redis_client.get('custom_field_id_mapper')
+    if not mapper:
+        return None
+    return json.loads(mapper)
+
+def set_custom_field_id_mapper(mapper:dict):
+    redis_client.set('custom_field_id_mapper',json.dumps(mapper))
+    redis_client.expire('custom_field_id_mapper', 60 *5)
 
 
 def get_changelog_releases():

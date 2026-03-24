@@ -12,10 +12,10 @@ app = FastAPI()
 
 Base.metadata.create_all(engine)
 
-#@app.on_event("startup")
-#async def startup_event():
-    #subprocess.Popen(["python", "-m", "youtrack.youTrack"])
-    #TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
+@app.on_event("startup")
+async def startup_event():
+    subprocess.Popen(["python", "-m", "youtrack.youTrack"])
+    TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
 
 @app.get('/okr1')
 def OKR1():

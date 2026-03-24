@@ -1,6 +1,22 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    Column,
+    Integer, 
+    String, 
+    DateTime, 
+    Interval,
+    ForeignKey,
+    Column
+    )
+from sqlalchemy.orm import (
+    Mapped, 
+    mapped_column, 
+    relationship
+    )
+
+from sqlalchemy.dialects.postgresql import UUID
 from models.base import Base
+
+import uuid
 import datetime
 
 """
@@ -12,25 +28,24 @@ import datetime
 """
 
 class Value(Base):
-    __tablename__ = 'values'
+    __tablename__ = 'value'
     
     id: Mapped[int] = mapped_column(primary_key=True)
     type: Mapped[str] = mapped_column(String, nullable=False)
-    field:Mapped["FieldValue"] = relationship(back_populates="value")
-    field_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
 
+    field_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'))
     __mapper_args__ = {
         'polymorphic_identity': 'value',
         'polymorphic_on': type
     }
 
 class StringValue(Value):
-    __tablename__ = 'string_values'
+    __tablename__ = 'string_value'
     
-    id: Mapped[int] = mapped_column(ForeignKey('values.id'),primary_key=True)
+    id: Mapped[int] = mapped_column(ForeignKey('value.id'),primary_key=True)
     value: Mapped[str] = mapped_column(String)
-    field:Mapped["FieldValue"] = relationship(back_populates="value")
-    field_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
+
+    field_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'))
     
     __mapper_args__ = {
         'polymorphic_identity': 'string'
@@ -39,22 +54,34 @@ class StringValue(Value):
 class DateValue(Value):
     __tablename__ = 'date_values'
     
-    id: Mapped[int] = mapped_column(ForeignKey('values.id'),primary_key=True)
+    id: Mapped[int] = mapped_column(ForeignKey('value.id'),primary_key=True)
     value: Mapped[datetime.datetime] = mapped_column(DateTime)
-    field:Mapped["FieldValue"] = relationship(back_populates="value")
-    field_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
+
+    field_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'))
     
     __mapper_args__ = {
         'polymorphic_identity': 'date'
     }
 
-class NumberValue(Value):
-    __tablename__ = 'number_values'
+class TimeValue(Value):
+    __tablename__ = 'time_value'
+
+    id: Mapped[int] = mapped_column(ForeignKey('value.id'),primary_key=True)
+    value: Mapped[datetime.timedelta] = mapped_column(Interval)
+
+    field_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'))
     
-    id: Mapped[int] = mapped_column(ForeignKey('values.id'),primary_key=True)
+    __mapper_args__ = {
+        'polymorphic_identity': 'time'
+    }
+
+class NumberValue(Value):
+    __tablename__ = 'number_value'
+    
+    id: Mapped[int] = mapped_column(ForeignKey('value.id'),primary_key=True)
     value: Mapped[int] = mapped_column(Integer)
-    field:Mapped["FieldValue"] = relationship(back_populates="value")
-    field_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
+
+    field_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'))
     
     __mapper_args__ = {
         'polymorphic_identity': 'number'
@@ -62,34 +89,7 @@ class NumberValue(Value):
 
 
 class FieldValue(Base):
-    __tablename__ = 'field_values'
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    type: Mapped[str] = mapped_column(String, nullable=False)
-    value: Mapped["Value"] = relationship("Value", back_populates="field", cascade="all, delete-orphan")
+    __tablename__ = 'field_value'
 
-    __mapper_args__ = {
-        'polymorphic_identity': 'value',
-        'polymorphic_on': type
-    }
-
-
-class PrimitiveValue(FieldValue):
-    __tablename__ = 'primitive_values'
-    
-    id: Mapped[int] = mapped_column(ForeignKey('field_values.id'), primary_key=True)
-    value: Mapped["Value"] = relationship("Value", back_populates="field", cascade="all, delete-orphan")
-    
-    __mapper_args__ = {
-        'polymorphic_identity': 'primitive'
-    }
-
-class ArrayValue(FieldValue):
-    __tablename__ = 'array_values'
-
-    id: Mapped[int] = mapped_column(ForeignKey('field_values.id'), primary_key=True)
-    value: Mapped[list["Value"]] = relationship("Value", back_populates="field", cascade="all, delete-orphan")
-    
-    __mapper_args__ = {
-        'polymorphic_identity': 'list'
-    }
+    id:Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

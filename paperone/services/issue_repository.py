@@ -16,7 +16,6 @@ from sqlalchemy.sql import over
 from sqlalchemy.sql import func as sqlfunc
 
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 import re
 import pytz
@@ -37,9 +36,8 @@ from models.issues import (
     IssueCustomFieldChange
 )   
 from models.value import (
-    PrimitiveValue,
-    ArrayValue,
     DateValue,
+    TimeValue,
     NumberValue,
     StringValue,
     FieldValue,
@@ -50,8 +48,11 @@ from services.redis_client import(
     set_okr2_data,
     get_okr2_data,
     set_okr4_data,
-    get_okr4_data
+    get_okr4_data,
+    set_custom_field_id_mapper,
+    get_custom_field_id_mapper
 )
+import uuid
 from collections import defaultdict
 import bisect
 
@@ -121,32 +122,69 @@ def extract_field_name(targetMember:str):
 
 #definizione della funzione che serve a creare un oggetto della classe value scelto in 
 #base al tipo dell'item passato 
-def get_value_obj(item):
-    item = item if not isinstance(item,dict) else item.get('name',None)
-    if isinstance(item,str):
-        return StringValue(value=item)
-    elif isinstance(item,int):
-        return NumberValue(value=item)
-    elif isinstance(item,datetime):
-        return DateValue(value=item)#check if it's correct
+def get_value_obj(item, uuid):
+    # Se item è un dizionario, prendi il valore associato a 'name', altrimenti usa item stesso
+
+    value_possible_keys = ["name","text","fullName","minutes"]
+    
+    item_value = None
+
+    if isinstance(item,dict):
+        for possible_key in value_possible_keys:
+            if possible_key in item.keys():
+                if possible_key == 'minutes':
+                    item_value = timedelta(minutes=item.get(possible_key))
+                else:
+                    item_value = item.get(possible_key)
+    else:
+        item_value = item
+
+    # Se l'item è una stringa, crea un oggetto StringValue
+    if isinstance(item_value, str):
+        return StringValue(value=item_value, field_id=uuid)
+
+    # Se l'item è un intero, crea un oggetto NumberValue
+    elif isinstance(item_value, int):
+        return NumberValue(value=item_value, field_id=uuid)
+
+    # Se l'item è un datetime, crea un oggetto DateValue
+    elif isinstance(item_value, datetime):
+        return DateValue(value=item_value, field_id=uuid)
+
+    elif isinstance(item_value, timedelta):
+        return TimeValue(value=item_value, field_id=uuid)
+
+    # Se nessuna delle condizioni precedenti è soddisfatta, ritorna None
     return None
 
 #crea un dizionario per ottenere gli id di custom field partendo da CustomField.name e 
 #Issue.id_readable
-def load_custom_field_mapper(session):
+def load_custom_field_mapper():
+
+    mapper = get_custom_field_id_mapper()
+    if mapper:
+        return mapper
+
     stmt = (
         select(IssueCustomField.id, IssueCustomField.name, Issue.id_readable)
-        .join(Issue, Issue.id == IssueCustomField.issue_id)
+        .join(Issue, Issue.id_readable == IssueCustomField.issue_id)
     )
-
-    rows = session.execute(stmt).all()
+    try:
+        with Session(engine) as session:
+            rows = session.execute(stmt).all()
+    except Exception as e:
+        logger.error(f"Error loading custom_field_mapper: {e}")
+        raise
 
     mapper = {
-        (row.name, row.id_readable): row.id
+        f"{row.name}/{row.id_readable}": row.id
         for row in rows
     }
 
+    set_custom_field_id_mapper(mapper)
+
     return mapper
+
 
 class IssueRepository:
     
@@ -167,119 +205,124 @@ class IssueRepository:
     #se l'issue esiste già viene aggiornata altrimenti viene creata
     @staticmethod
     def upsert_issues(issue_data:list):
-        with Session(engine) as session:
-            try:
-                len_data = len(issue_data) if issue_data else 0
-                logger.info(f"Received {len_data} issues")                
-                issues = []
-                values_to_add = []
-                for data in issue_data:
-                    created=convert_to_timestamp(data.get('created'))
-                    updated=convert_to_timestamp(data.get('updated'))
-                    parent = data.get('parent')
-                    parent_issues= parent.get('issues',None) if parent else None
-                    
-                    parent_issue_id = None
-                    if parent_issues:
-                        if isinstance(parent_issues, list) and parent_issues:
-                            parent_issue_id = parent_issues[0].get('idReadable', None)
-                        elif isinstance(parent_issues, dict):
-                            parent_issue_id = parent_issues.get('idReadable', None)
-                    
-                    issue = Issue(
-                            youtrack_id=data.get('id'),
-                            id_readable=data.get('idReadable'),
-                            summary=data.get('summary'),
-                            created=created,
-                            updated=updated,
-                            parent_id=parent_issue_id
-                        )
 
+
+        len_data = len(issue_data) if issue_data else 0
+        logger.info(f"Received {len_data} issues")   
+
+        if issue_data:        
+
+            issue_rows = []
+            custom_field_rows = []
+            field_value_rows = []
+            value_rows = []
+
+            for data in issue_data:
+                created=convert_to_timestamp(data.get('created'))
+                updated=convert_to_timestamp(data.get('updated'))
+                parent = data.get('parent')
+                parent_issues= parent.get('issues',None) if parent else None
+                id_readable = data.get('idReadable',None)
+
+
+                parent_issue_id = None
+                if parent_issues:
+                    if isinstance(parent_issues, list) and parent_issues:
+                        parent_issue_id = parent_issues[0].get('idReadable', None)#we keep only the first parent if there are more than one(temporary adjustment)
+                    elif isinstance(parent_issues, dict):
+                        parent_issue_id = parent_issues.get('idReadable', None)
+                    
+                issue_rows.append({
+                "youtrack_id":data.get('id',None),
+                "id_readable":id_readable,
+                "summary":data.get('summary'),
+                "parent_id":parent_issue_id,
+                "created":created,
+                "updated":updated
+                })
+                
+                if id_readable:
                     for field in data.get('customFields',[]):
-
                         name = field.get('name')
 
                         value = field.get('value')
-                        
+
+                        new_uuid = uuid.uuid4()
+
+                        field_value_rows.append({
+                            "id":new_uuid
+                        })
+
+                        custom_field_rows.append({
+                            "name":name,
+                            "value_id":new_uuid,
+                            "issue_id":id_readable
+                        })
+                                
                         if isinstance(value,list):
-                            value = ArrayValue(value=[result for item in value if (result := get_value_obj(item)) is not None])
+                            for item in value:
+                                value_item = get_value_obj(item,new_uuid)
+                                if value_item is not None:
+                                    value_rows.append(value_item)
+                                    
                         else:
-                            result = get_value_obj(value)
-                            if result is not None:
-                                value = PrimitiveValue(value=result)
-                            else:
-                                value = None 
-                        if value:
-                            values_to_add.append(value)
-                            issueCustomField = IssueCustomField(
-                                name=name,
-                                value=value,
-                                issue=issue
-                            )
-                            issue.custom_fields.append(issueCustomField)
-                    
-                    issues.append(issue)
-                logger.info(f"Adding {len(values_to_add)} Values")
-                session.add_all(values_to_add)
-                session.commit()
-                for value in values_to_add:
-                    session.refresh(value)
+                            value_item = get_value_obj(value,new_uuid)
+                            if value_item is not None:
+                                value_rows.append(value_item)
 
-                logger.info(f"Upserting {len(issues)} Issues...")
 
-                stmt = (
-                    insert(Issue)
-                    .values([{
-                        'youtrack_id': issue.youtrack_id,
-                        'id_readable': issue.id_readable,
-                        'summary': issue.summary,
-                        'created': issue.created,
-                        'updated': issue.updated,
-                        'parent_id': issue.parent_id
-                    } for issue in issues]
-                    ).on_conflict_do_update(
-                        index_elements=["youtrack_id"],
-                        set_={
-                            "summary": insert(Issue).excluded.summary,
-                            "updated": insert(Issue).excluded.updated,
-                            "parent_id": insert(Issue).excluded.parent_id,
-                        }
-                    )
-                )
-                session.execute(stmt)
-                session.commit()
-                for issue in issues:
-                    for custom_field in issue.custom_fields:
-                        value_id = custom_field.value.id if custom_field.value else None
+            upsert_issues_stmt = (
+                insert(Issue)
+                .values(issue_rows
+                ).on_conflict_do_update(
+                    index_elements=["youtrack_id"],
+                    set_={
+                        "summary": insert(Issue).excluded.summary,
+                        "updated": insert(Issue).excluded.updated,
+                        "parent_id": insert(Issue).excluded.parent_id,
+                    }
+                ).returning('*') 
+            )
 
-                        issue_id_stmt = (
-                            select(Issue.id
-                            ).select_from(Issue
-                            ).where(
-                                Issue.id_readable == issue.id_readable
-                            )
-                        )
-                        issue_id = session.execute(issue_id_stmt).scalar_one_or_none()
+            upsert_custom_fields_stmt = (
+                insert(IssueCustomField)
+                .values(custom_field_rows
+                ).on_conflict_do_update(
+                    index_elements=["name","issue_id"],
+                    set_={
+                        "value_id":insert(IssueCustomField).excluded.value_id
+                    }
+                ).returning('*') 
+            )
 
-                        stmt_cf = (
-                            insert(IssueCustomField)
-                            .values({
-                                'name': custom_field.name,
-                                'value_id': value_id,
-                                'issue_id': issue_id
-                            }).on_conflict_do_update(#ut
-                                index_elements=["issue_id", "name"],
-                                set_={
-                                    "value_id": insert(IssueCustomField).excluded.value_id
-                                }
-                            )
-                        )
-                        session.execute(stmt_cf)
-                session.commit()
-            except Exception as e:
-                logger.error(f"Error while upserting issues with custom fields: {e}")
-                session.rollback()
-                raise
+            insert_field_values_stmt = (
+                insert(FieldValue)
+                .values(field_value_rows)
+                .returning('*') 
+            )
+
+            with Session(engine) as session:
+                try:
+
+                    session.execute(insert(FieldValue).values(field_value_rows))
+
+                    session.add_all(value_rows)
+    
+
+                    issue_inserted = session.execute(upsert_issues_stmt).fetchall()
+                    logger.info(f"Added {len(issue_inserted)} Issues")
+
+                    custom_field_inserted = session.execute(upsert_custom_fields_stmt).fetchall()
+
+
+                    logger.info(f"Added {len(custom_field_inserted)} Custom Fields")
+                    session.commit() 
+
+
+                except Exception as e:
+                    logger.error(f"Error while upserting issues with custom fields: {e}")
+                    session.rollback()
+                    raise
 
     # NEED TO DRASTICALLY REDUCE THE TIME NEEDED TO UPSERT ACTIVITYITEMS
     #questo metodo che segue è il secondo dei due coinvolti nella prima funzionalità della classe
@@ -295,7 +338,7 @@ class IssueRepository:
 
                 activity_item_rows = []
 
-                values_to_add = []
+                value_rows = []
 
                 custom_field_id_mapper = load_custom_field_mapper(session)
 
@@ -317,9 +360,9 @@ class IssueRepository:
                         added = ArrayValue(value=[result for item in added if (result := get_value_obj(item)) is not None])if isinstance(added,list) else PrimitiveValue(value=get_value_obj(item=added))
                         
                         if rm:
-                            values_to_add.append(rm)
+                            value_rows.append(rm)
                         if added:
-                            values_to_add.append(added)
+                            value_rows.append(added)
 
                         field_name = extract_field_name(targetMember)
                         customField_id = custom_field_id_mapper.get((field_name,issue_id_readable),None)
@@ -344,9 +387,9 @@ class IssueRepository:
 
                 added_items = 0
 
-                session.add_all(values_to_add)
+                session.add_all(value_rows)
                 session.commit()#rimuovo questo commit
-                for item in values_to_add:#non faccio il
+                for item in value_rows:#non faccio il
                     session.refresh(item)
 
                 if activity_item_rows:
@@ -375,6 +418,124 @@ class IssueRepository:
                 session.rollback()
                 raise
    
+    @staticmethod
+    def upsert_activity_items_test(activity_item_data:list):
+
+        icf = aliased(IssueCustomField)
+
+        activity_item_rows = []
+        field_value_rows = []
+        value_rows = []
+
+        custom_field_id_mapper = load_custom_field_mapper()
+
+        for data in activity_item_data:
+            targetMember = data.get('targetMember')
+
+            if targetMember is not None:
+                issue = data.get('target')
+
+                issue_id_readable = issue.get('idReadable',None) if issue else None
+
+                rm = data.get('removed')
+
+                added = data.get('added')
+
+                field_name = extract_field_name(targetMember)
+                customField_id = custom_field_id_mapper.get(f"{field_name}/{issue_id_readable}",None)
+
+                added_uuid = None
+                rm_uuid = None
+                
+                if customField_id:
+                    if rm:
+                        rm_uuid = uuid.uuid4()
+
+                        field_value_rows.append({
+                            "id":rm_uuid
+                        })
+
+                        if isinstance(rm,list):
+                            for item in rm:
+                                value_obj = get_value_obj(item,rm_uuid)
+                                if value_obj is not None:
+                                    value_rows.append(value_obj)
+                        else:
+                            rm = get_value_obj(rm,rm_uuid)
+                            if rm is not None:
+                                value_rows.append(rm)
+
+                    if added:
+                        added_uuid = uuid.uuid4()
+
+                        field_value_rows.append({
+                            "id":added_uuid
+                        })
+                        if isinstance(added,list):
+                            for item in added:
+                                value_obj = get_value_obj(item,added_uuid)
+                                if value_obj is not None:
+                                    value_rows.append(value_obj)
+                        else:
+                            added = get_value_obj(added,added_uuid)
+                            if added is not None:
+                                value_rows.append(added)
+
+
+                    timestamp = data.get('timestamp')
+                    timestamp = datetime.fromtimestamp(timestamp/1000) if timestamp else None
+                    activity_item_rows.append({
+                        'field_id': customField_id,
+                        'old_value_id': rm_uuid,
+                        'new_value_id': added_uuid,
+                        'timestamp': timestamp
+                    })
+
+
+        insert_field_values_stmt = (
+            insert(FieldValue)
+            .values(field_value_rows)
+        )
+
+        insert_cf_change_stmt = (
+            insert(IssueCustomFieldChange)
+            .values(activity_item_rows)
+            .on_conflict_do_nothing(
+                index_elements=["field_id", "timestamp"]
+            )
+            .returning(IssueCustomFieldChange.id)
+        )
+
+
+        data = []
+        for item in items:
+            obj = get_value_obj(item, uuid)
+            if obj:
+                data.append({
+                    "type": obj.type,
+                    "value": getattr(obj, "value"),
+                    "field_id": obj.field_id
+                })
+
+
+        with Session(engine) as session:
+            try:
+                session.execute(insert_field_values_stmt)
+
+                icfc_id = session.execute(insert_cf_change_stmt).fetchall()
+
+                # bulk insert nella tabella base
+                session.bulk_insert_mappings(Value, data)
+
+
+                logger.debug('worker is done')
+                session.commit()
+
+            except Exception as e:
+                logger.error(f"Error while upserting data: {e}")
+                session.rollback()
+                raise
+   
     #questo metodo ricostruisce la vita di ogni singolo validation 
     @staticmethod
     def validation_changes():
@@ -393,7 +554,7 @@ class IssueRepository:
                 icfc.timestamp,
                 sv.value.label('custom_field_value')
             )
-            .join(icf,i.id == icf.issue_id)
+            .join(icf,i.id_readable == icf.issue_id)
             .join(icfc,icf.id == icfc.field_id)
             .join(sv, icfc.new_value_id == sv.field_id)
             .where(i.summary.like('(Integration Test Verification)%')) # mi interessano solo questi
@@ -496,7 +657,7 @@ class IssueRepository:
                 i.id_readable,
                 sv.value
             )
-            .join(icf,i.id == icf.issue_id)
+            .join(icf,i.id_readable == icf.issue_id)
             .join(sv, icf.value_id == sv.field_id)
             .where(icf.name == 'Fix versions')
         ).cte('parent')
@@ -574,7 +735,7 @@ class IssueRepository:
                 i.id,
                 func.date_trunc('month',i.created).label('date')
             )
-            .join(icf, icf.issue_id == i.id)
+            .join(icf, icf.issue_id == i.id_readable)
             .join(sv, icf.value_id == sv.field_id)
             .where(
                 icf.name == 'Type',
@@ -589,7 +750,7 @@ class IssueRepository:
                 bugs_cte.c.date,
                 sv.value.label('origin')
             )
-            .join(icf, icf.issue_id == bugs_cte.c.id)
+            .join(icf, icf.issue_id == bugs_cte.c.id_readable)
             .join(sv, icf.value_id == sv.field_id)
             .where(icf.name == 'Origine')
         )
@@ -602,7 +763,7 @@ class IssueRepository:
                 bugs_by_Origine_cte.c.origin,
                 sv.value.label('product')
             )
-            .join(icf, icf.issue_id == bugs_by_Origine_cte.c.id)
+            .join(icf, icf.issue_id == bugs_by_Origine_cte.c.id_readable)
             .join(sv, icf.value_id == sv.field_id)
             .where(icf.name == 'Product')           
         ).cte('bugs_by_Origine_and_Product_cte')
@@ -660,9 +821,11 @@ class IssueRepository:
             bug_reports_by_date[date][origin][product] += count#accumulo tutti i bug segnalati da questa fonte per questo prodotto
 
         grafana_formatted_result = []
-
-        changelog_releases = ProductRepository.changelog_releases()
-
+        try:
+            changelog_releases = ProductRepository.changelog_releases()
+        except Exception as e:
+            logger.error(e)
+            changelog_releases = {}
         for date , bugs_by_origin_and_product in bug_reports_by_date.items():
             if isinstance(bugs_by_origin_and_product,dict):
                 customer_bugs = bugs_by_origin_and_product['Cliente']['tot'] if 'Cliente' in bugs_by_origin_and_product.keys() else 0
@@ -708,7 +871,10 @@ class IssueRepository:
 
 
         for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,first_assigned_to_TCoE,last_set_as_done,fix_version,queue,previous_session_stop_ts in validation_data:
-            if fix_version in rc0_releases.keys():
+            if assigned_ts is None or first_assigned_to_TCoE is None or last_set_as_done is None:
+                logger.warning(f"smt is wrong {assigned_ts} - {first_assigned_to_TCoE} - {last_set_as_done} / {id_readable}")
+            
+            elif fix_version in rc0_releases.keys():
                 if fix_version not in buckets.keys():
                     
                     buckets[fix_version] = {

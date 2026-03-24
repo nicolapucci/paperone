@@ -7,6 +7,8 @@ from sqlalchemy import (
     UniqueConstraint,
     ForeignKey
 )
+
+from sqlalchemy.dialects.postgresql import UUID
 import datetime
 
 from models.base import Base
@@ -44,8 +46,6 @@ class Issue(Base):
 
     summary:Mapped[str]
 
-    custom_fields:Mapped[list["IssueCustomField"]] = relationship(back_populates="issue",cascade="all, delete-orphan")
-
     parent_id: Mapped[str] = mapped_column(nullable=True)
 
     #author: Mapped["User"] = relationship(back_populates="issues")
@@ -61,20 +61,9 @@ class IssueCustomField(Base):
 
     name:Mapped[str]
 
-    issue_id: Mapped[int] = mapped_column(ForeignKey('issue.id'))
-    issue:Mapped["Issue"] = relationship(back_populates="custom_fields")
+    issue_id: Mapped[str] = mapped_column(ForeignKey('issue.id_readable'))
 
-    value_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
-    value:Mapped["FieldValue"] = relationship(
-        single_parent=True,
-        cascade="all, delete-orphan"
-        )
-
-    changes: Mapped[list["IssueCustomFieldChange"]] = relationship(
-        back_populates="field",
-        cascade="all, delete-orphan",
-        single_parent=True
-        )
+    value_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'))
 
     __table_args__ = (
         UniqueConstraint("issue_id", "name"),
@@ -88,21 +77,10 @@ class IssueCustomFieldChange(Base):
     id:Mapped[int] = mapped_column(primary_key=True)
 
     field_id: Mapped[int] = mapped_column(ForeignKey('issueCustomField.id'))
-    field: Mapped["IssueCustomField"] = relationship(back_populates="changes")
     
-    old_value_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
-    old_value:Mapped["FieldValue"] = relationship(
-        single_parent=True,
-        foreign_keys=[old_value_id],
-        cascade="all, delete-orphan"
-    )
+    old_value_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'),nullable=True)
 
-    new_value_id:Mapped[int] = mapped_column(ForeignKey('field_values.id'))
-    new_value:Mapped["FieldValue"] = relationship(
-        single_parent=True,
-        foreign_keys=[new_value_id],
-        cascade="all, delete-orphan"
-    )
+    new_value_id:Mapped[UUID] = mapped_column(ForeignKey('field_value.id'),nullable=True)
 
     timestamp:Mapped[datetime.datetime]
 

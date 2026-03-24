@@ -3,7 +3,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-
+from services.logger import logger  
 from services.redis_client import get_changelog_releases,set_changelog_releases
 
 """
@@ -212,6 +212,7 @@ class ProductRepository:
                 date = datetime(year,month,day)
 
                 versions[version] = date
+
         
         set_changelog_releases(versions)
 

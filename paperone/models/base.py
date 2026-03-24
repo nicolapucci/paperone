@@ -3,7 +3,7 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import(                    
     TIMESTAMP,                             
     BIGINT,                                
-    String                                 
+    String,
 )
 
 import datetime
