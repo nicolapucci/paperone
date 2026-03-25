@@ -154,8 +154,11 @@ def get_value_obj(item, uuid):
     elif isinstance(item_value, timedelta):
         return TimeValue(value=item_value, field_id=uuid)
 
-    # Se nessuna delle condizioni precedenti è soddisfatta, ritorna None
-    return None
+    else:
+        # Se nessuna delle condizioni precedenti è soddisfatta, ritorna None
+        logger.warning(f"unable to classify {item} returning None")
+        raise
+
 
 #crea un dizionario per ottenere gli id di custom field partendo da CustomField.name e 
 #Issue.id_readable
@@ -258,17 +261,21 @@ class IssueRepository:
                             "value_id":new_uuid,
                             "issue_id":id_readable
                         })
-                                
-                        if isinstance(value,list):
-                            for item in value:
-                                value_item = get_value_obj(item,new_uuid)
-                                if value_item is not None:
+
+                        if value is not None:       
+                            if isinstance(value,list):
+                                for item in value:
+                                    try:
+                                        value_item = get_value_obj(item,new_uuid)
+                                        value_rows.append(value_item)
+                                    except Exception as e:
+                                        logger.warning(f"unable to create Value item: {value} / {name} / {id_readable}")    
+                            else:
+                                try:
+                                    value_item = get_value_obj(value,new_uuid)
                                     value_rows.append(value_item)
-                                    
-                        else:
-                            value_item = get_value_obj(value,new_uuid)
-                            if value_item is not None:
-                                value_rows.append(value_item)
+                                except Exception as e:
+                                    logger.warning(f"unable to create Value item: {value} / {name} / {id_readable}")
 
 
             upsert_issues_stmt = (
@@ -300,31 +307,18 @@ class IssueRepository:
                 .values(field_value_rows)
                 .returning('*') 
             )
-            data = []
-            for item in items:
-                obj = get_value_obj(item, uuid)
-                if obj:
-                    data.append({
-                        "type": obj.type,
-                        "value": getattr(obj, "value"),
-                        "field_id": obj.field_id
-                    })
-                    
+
             with Session(engine) as session:
                 try:
 
                     session.execute(insert(FieldValue).values(field_value_rows))
 
-
-                    # bulk insert nella tabella base
-                    session.bulk_insert_mappings(Value, data)
-    
+                    session.add_all(value_rows)    
 
                     issue_inserted = session.execute(upsert_issues_stmt).fetchall()
                     logger.info(f"Added {len(issue_inserted)} Issues")
 
                     custom_field_inserted = session.execute(upsert_custom_fields_stmt).fetchall()
-
 
                     logger.info(f"Added {len(custom_field_inserted)} Custom Fields")
                     session.commit() 
@@ -341,96 +335,6 @@ class IssueRepository:
     #modifiche affinchè vengano mappati i cambiamenti di valore nel tempo(più complesso del primo)
     @staticmethod
     def upsert_activity_items(activity_item_data:list):
-        icf = aliased(IssueCustomField)
-
-        with Session(engine) as session:
-            try:
-                logger.info(f"received {len(activity_item_data)} activity items...")
-
-                activity_item_rows = []
-
-                value_rows = []
-
-                custom_field_id_mapper = load_custom_field_mapper(session)
-
-                for data in activity_item_data:
-                    targetMember = data.get('targetMember')
-
-                    if targetMember is not None:
-                        issue = data.get('target')
-                        try:
-                            issue_id_readable = issue.get('idReadable') if issue else None
-                        except Exception:
-                            logger.debug(f"Cannot get idReadable from {data}")
-                            continue
-                        
-                        rm = data.get('removed')
-                        rm = ArrayValue(value=[result for item in rm if (result := get_value_obj(item)) is not None])if isinstance(rm,list) else PrimitiveValue(value=get_value_obj(item=rm))
-                        
-                        added = data.get('added')
-                        added = ArrayValue(value=[result for item in added if (result := get_value_obj(item)) is not None])if isinstance(added,list) else PrimitiveValue(value=get_value_obj(item=added))
-                        
-                        if rm:
-                            value_rows.append(rm)
-                        if added:
-                            value_rows.append(added)
-
-                        field_name = extract_field_name(targetMember)
-                        customField_id = custom_field_id_mapper.get((field_name,issue_id_readable),None)
-
-                        #qui creo l'uuid per rm e/o added (se non sono None)
-
-                        if customField_id:
-                            try:
-                                timestamp = data.get('timestamp')
-                                timestamp = datetime.fromtimestamp(timestamp/1000) if timestamp else None
-                                activity_item_rows.append({
-                                    'field_id': customField_id,
-                                    'old_value': rm if rm else None,#qui invece metto direttamente rm.id,added.id o None
-                                    'new_value': added if added else None,
-                                    'timestamp': timestamp
-                                })
-                            except Exception as e:
-                                logger.error(f"Error while creating activity_item: {field_name}, {issue_id_readable},{rm},{added},{data.get('timestamp')}")
-                                raise
-                        #else:
-                            #logger.warning(f"Custom field {field_name} -- {targetMember} of issue {issue_id_readable} not found")
-
-                added_items = 0
-
-                session.add_all(value_rows)
-                session.commit()#rimuovo questo commit
-                for item in value_rows:#non faccio il
-                    session.refresh(item)
-
-                if activity_item_rows:
-                    logger.info(f"trying to add {len(activity_item_rows)} activity Items")
-    
-                    activity_item_rows = [{
-                                    'field_id': item['field_id'],
-                                    'old_value_id': item['old_value'].id if item['old_value'] else None,
-                                    'new_value_id': item['new_value'].id if item['new_value'] else None,
-                                    'timestamp': item['timestamp']
-                                } for item in activity_item_rows]
-
-                    stmt_cf_change = pg_insert(IssueCustomFieldChange
-                        ).values(activity_item_rows
-                        ).on_conflict_do_nothing(
-                        index_elements=["field_id", "timestamp"]
-                    ).returning(IssueCustomFieldChange.id)
-                    result = session.execute(stmt_cf_change).fetchall()
-                    added_items = len(result)
-
-                session.commit()    
-                logger.info(f"added {added_items} new activity Items")
-            
-            except Exception as e:
-                logger.error(f"Error while upserting data: {e}")
-                session.rollback()
-                raise
-   
-    @staticmethod
-    def upsert_activity_items_test(activity_item_data:list):
 
         icf = aliased(IssueCustomField)
 
@@ -468,13 +372,17 @@ class IssueRepository:
 
                         if isinstance(rm,list):
                             for item in rm:
-                                value_obj = get_value_obj(item,rm_uuid)
-                                if value_obj is not None:
+                                try:
+                                    value_obj = get_value_obj(item,rm_uuid)
                                     value_rows.append(value_obj)
+                                except Exception as e:
+                                    logger.warning(f"unable to create Value item: {item} / {field_name} / {issue_id_readable}")
                         else:
-                            rm = get_value_obj(rm,rm_uuid)
-                            if rm is not None:
+                            try:
+                                rm = get_value_obj(rm,rm_uuid)
                                 value_rows.append(rm)
+                            except Exception as e:
+                                logger.warning(f"unable to create Value item: {rm} / {field_name} / {issue_id_readable}")
 
                     if added:
                         added_uuid = uuid.uuid4()
@@ -484,14 +392,17 @@ class IssueRepository:
                         })
                         if isinstance(added,list):
                             for item in added:
-                                value_obj = get_value_obj(item,added_uuid)
-                                if value_obj is not None:
+                                try:
+                                    value_obj = get_value_obj(item,added_uuid)
                                     value_rows.append(value_obj)
+                                except Exception as e:
+                                    logger.warning(f"unable to create Value item: {item} / {field_name} / {issue_id_readable}")
                         else:
-                            added = get_value_obj(added,added_uuid)
-                            if added is not None:
+                            try:
+                                added = get_value_obj(added,added_uuid)
                                 value_rows.append(added)
-
+                            except Exception as e:
+                                logger.warning(f"unable to create Value item: {added} / {field_name} / {issue_id_readable}")
 
                     timestamp = data.get('timestamp')
                     timestamp = datetime.fromtimestamp(timestamp/1000) if timestamp else None
@@ -518,15 +429,6 @@ class IssueRepository:
         )
 
 
-        data = []
-        for item in items:
-            obj = get_value_obj(item, uuid)
-            if obj:
-                data.append({
-                    "type": obj.type,
-                    "value": getattr(obj, "value"),
-                    "field_id": obj.field_id
-                })
 
 
         with Session(engine) as session:
@@ -535,8 +437,7 @@ class IssueRepository:
 
                 icfc_id = session.execute(insert_cf_change_stmt).fetchall()
 
-                # bulk insert nella tabella base
-                session.bulk_insert_mappings(Value, data)
+                session.add_all(value_rows)
 
 
                 logger.debug('worker is done')
@@ -761,8 +662,8 @@ class IssueRepository:
                 bugs_cte.c.date,
                 sv.value.label('origin')
             )
-            .join(icf, icf.issue_id == bugs_cte.c.id_readable)
-            .join(sv, icf.value_id == sv.field_id)
+            .join(icf, bugs_cte.c.id_readable == icf.issue_id)
+            .join(sv, icf.value_id == sv.field_id,isouter=True)
             .where(icf.name == 'Origine')
         )
 
@@ -775,7 +676,7 @@ class IssueRepository:
                 sv.value.label('product')
             )
             .join(icf, icf.issue_id == bugs_by_Origine_cte.c.id_readable)
-            .join(sv, icf.value_id == sv.field_id)
+            .join(sv, icf.value_id == sv.field_id,isouter=True)
             .where(icf.name == 'Product')           
         ).cte('bugs_by_Origine_and_Product_cte')
 
@@ -843,7 +744,7 @@ class IssueRepository:
                 grafana_formatted_item = {
                     "date":date,
                     "Customer Bugs":customer_bugs,
-                    "Company Bugs":bugs_by_origin_and_product['tot'],
+                    "Company Bugs":bugs_by_origin_and_product['tot'],#KEY IS MISLEADING; THOSE ARE ALL THE BUGS FOUND BY ANYONE
                     "Defect Rate":customer_bugs / bugs_by_origin_and_product['tot'] if bugs_by_origin_and_product['tot'] > 0 else None,
                     "FW Released": None if (date.year, date.month) in [(d.year, d.month) for d in changelog_releases.values()] else 1
                 }

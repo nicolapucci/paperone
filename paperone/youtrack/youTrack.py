@@ -37,7 +37,7 @@ base_query= 'project: Kalliope'
 fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
 
 #same as field but for ActivityItems
-activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value),removed(id,idReadable),target(id,idReadable),targetMember'
+activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value(name,text,fullName,minutes)),removed(id,idReadable,name,value(name,text,fullName,minutes)),target(id,idReadable),targetMember'
 
 #We need to specify the category of ActivityItems we want YouTrack to return(CustomFieldCategory will return Issue custom Fields)
 activity_item_category = 'CustomFieldCategory'
@@ -102,7 +102,7 @@ async def process_issues(executor,query):
 
 
 def upsert_activity_items_thread(chunk):
-    IssueRepository.upsert_activity_items_test(activity_item_data=chunk)
+    IssueRepository.upsert_activity_items(activity_item_data=chunk)
 
 async def get_activity_items(fields,query,categories):#async fetch ActivityItems from YouTrack
 
@@ -157,7 +157,6 @@ async def process_activity_items(executor, query):#Uses ThreadPoolExecutor to co
     await asyncio.gather(*tasks)
 
     return
-
 
 async def youTrack_worker():
 
