@@ -1,128 +1,333 @@
-# Descrizione del progetto
-Lo scopo del progetto è monitorare l'andamento del TCoE nelle diverse fasi di lavorazione.
-Il Progetto si basa sull'uso di Grafana per la generazione di Dashboards e di un 'middleman' che gestisce aggiornamento e elaborazione dei dati provenienti da fonti esterne (Server di servizi usati dal team, file statici, wiki etc.).
+# Documentazione del progetto  
 
-### Servizi
-Il progetto è stato sviluppato utilizzando Docker e comprende quattro servizi principali:
- - **Redis**   
- - **Postgresql**  
- - **Paperone**(Fast API, py)che interroga le fonti e il database per poi elaborarne i dati prima di fornirli a Grafana
- - **Grafana**
+## Introduzione
 
-  
-  >Non è stata implementata alcuna forma di sicurezza, il progetto espone solo il servizio di Grafana che ha i suoi livelli di sicurezza ed è pensato per girare all'interno di rete protetta.
+Lo scopo del progetto è monitorare l’andamento del TCoE nelle diverse fasi di lavorazione.
 
-### Il concetto di OKR
-Un OKR, acronimo di **Objective and Key Results**, è un indicatore di valutazione.  
-Nel nostro caso, gli OKR definiti sono i seguenti:
+L’architettura si basa sull’utilizzo di un componente intermedio (“middleman”) che si occupa di:
+- aggiornare i dati  
+- elaborare le informazioni provenienti da fonti esterne  
 
-- **OKR 1**: *Defect-rate*  
-- **OKR 2**: *Tempo di esecuzione dei test*  
-- **OKR 3**: *Test per FTE*  
-- **OKR 4**: *Validation*  
+Le principali fonti includono:
+- server di servizi utilizzati dal team  
+- file statici  
+- wiki  
 
-### OKR 1: Defect-rate
-Il primo OKR misura il **defect-rate**,ovvero la percentuale che rappresenta il rapporto tra i bug segnalati dai clienti e il totale dei bug rilevati dall'azienda.  
-
-### OKR 2: Tempo di esecuzione dei test
-Il secondo OKR calcola il tempo di esecuzione della fase di test, suddiviso per attività specifiche. I dettagli sono i seguenti:
-
-- La data di inizio della fase di test è stata approssimata a partire dalla data di pubblicazione dell'**RC0**.
-- La data di fine è stata approssimata dalla data del **changelog**.
-
-Per quanto riguarda la gestione dei test e delle validation (discussione che affronteremo nell'OKR 4), presupponiamo che il team faccia test quando non ha validation assegnati, o quando ce li ha ma non sono ancora sotto la sua responsabilità. Al contrario, eseguiranno validation solo quando sono loro assegnati e ci stanno effettivamente lavorando. A differenza dell'OKR 4, i **validation** sono separati in sessioni distinte, e vengono conteggiati solo quelli successivi all'**RC0**. Le distinzioni negli *slipped* (ritardi) non vengono fatte se questi sono imputabili o meno al **TCoE**.
-
-### OKR 3: Test per FTE  
-Il terzo OKR misura il rapporto tra il numero di test effettuati e l'**FTE** (Full-Time Equivalent). L'**FTE**  è un indicatore che rappresenta l'unità di misura del lavoro, ed è calcolato come la somma delle ore lavorative settimanali dei membri del team.
-Noi usiamo come misura l'FTE relativo a 2 settimane di lavoro.  
-
-### OKR 4: Validation
-Quest'ultimo OKR misura vari aspetti legati alla lavorazione dei **validation** , come il numero, i tempi di esecuzione e le attese.
-
-#### Premesse 
-Poiché tutte le ipotesi sono state fatte sulla base di dati limitati, ci potrebbero essere inesattezze e margini d'errore. Tuttavia questa è l'unica metodologia che siamo riusciti a implementare data la mancanza di un approccio più affidabile.
-
-- Un membro del **TCoE** può lavorare su un solo **validation** alla volta.
-- Ogni **validation** è assegnato a una sola persona.
-- Un membro del team che inizia a lavorare su un **validation** non fa altro fino a quando non lo completa.
-- I **validation** hanno priorità sui **test**.
-- Tutti i membri del team lavorano a tempo pieno, con orari dalle **9:00 CET alle 18:00 CET**.
-
-**Nota**: Ogni assunzione sopra riportata comporta una perdita di affidabilità nei dati finali.
-
-#### Logiche
-
-Abbiamo cercato di stimare le fasi di vita dei **validation** utilizzando le assunzioni precedenti, in assenza di dati diretti.
-
-La vita di un **validation** è divisa in fasi, definite come
-
-- **Idle**: il **validation** è sotto la responsabilità del **TCoE**, ma non è in lavorazione.
-- **Lavorazione**: il **validation** è in fase di lavorazione.
-- **Non in mano al TCoE**: il **validation** non è sotto la gestione del **TCoE**.
-
-Ogni "pezzo" può verificarsi più volte durante la vita di un **validation**. Per determinare i "pezzi" in lavorazione, ci basiamo sui cambi di stato dello **Stage**. Quando un **validation** viene messo in stato `Blocked` o `Done`, si chiude un "pezzo" di lavorazione. Successivamente, per capire chi è stato l'ultimo membro del **TCoE** a lavorare su di esso, guardiamo l'ultimo **Assignee** assegnato.
-
-La logica per determinare l'inizio e la fine di ogni "pezzo" è la seguente:
-
-- **Inizio**: il momento più recente tra la data di assegnazione dell'**Assignee** e il completamento della lavorazione precedente dello stesso **Assignee**.
-- **Fine**: il momento in cui lo stato del **validation** cambia a `Done` o `Blocked`.
-
-Le categorie sono quindi:
-
-- **Lavorazione**: dall'assegnazione dell'**Assignee** fino al cambiamento di stato.
-- **Idle**: dal momento in cui l'**Assignee** termina la sua lavorazione fino alla nuova assegnazione.
-- **Non in mano al TCoE**: se il **validation** non è sotto la responsabilità del team, lo ignoriamo.
-
-#### I bucket dei **validation**
-
-I **validation** vengono suddivisi in 4 categorie principali:
-
-- **Pre**: contiene tutti i **validation** assegnati e completati prima della release dell'**RC0**.
-- **During**: contiene tutti i **validation** assegnati e completati dopo la release dell'**RC0**.
-- **Slipped_to_TCoE**: contiene i **validation** assegnati prima del firmware, ma completati durante il periodo **During**.
-- **Slipped_not_to_TCoE**: contiene i **validation** assegnati prima del firmware, ma completati durante il periodo **During** per motivi non imputabili al **TCoE** (ad esempio, un bug trovato in fase di pre-release e risolto con l'**RC0**).
-
-#### Dettagli aggiuntivi:
-
-- **Data di assegnazione al TCoE**: la prima volta in cui una **issue** viene assegnata a un membro del **TCoE**.
-- **Data di completamento**: l'ultima volta in cui il **validation** è stato messo in stato "Done".
-- **Le code**: rappresentano il numero di sessioni di lavorazione attese, ovvero le "completion" dello stesso **Assignee** tra la data di assegnazione e quella di completamento.
-
-
-### Workflows
-Il progetto è quasi completamente automatizzato. Tuttavia, la raccolta dei dati da BugIA e dal License Server non è ancora automatizzabile, pertanto i dati devono essere inseriti manualmente.
-
-Il Progetto ha 2 workflows principali:
-- **raccolta dati**   
-- **generazione dashboard**
-
-**Raccolta dati**  
-Il prelievo dei dati è stato fatto da diverse fonti le quali sono:  
-- YouTrack da dove abbiamo prelevato i dati delle issue con i relativi CustomFields;  
-- il folder bugia_csv da cui abbiamo prelevato i dati dei test;  
-- la wiki dei changelog delle fw versions da dove abbiamo prelevato le pubblicazioni dei changelog per ciascuna fw version e  
-- un mapper scritto a mano contenuto in ./services/product_repository.py.
-
-P.S.: perchè non disponevamo di un accesso diretto a BugIA e al License Server, per inserire i dati dei test abbiamo dovuto inserire il file csv nella cartella **./bugia_csv** così che, all'avvio, il progetto li elaborava e li inseriva nel db. Il mapper scritto manualmente mappa ogni versione alla data di rilascio della sua RC0 sul License Server. Ogni nuova versione, però, deve essere aggiunta manualmente al file.
-
-**Generazione dashboard**
-1. Grafana interroga un endpoint di Paperone
-2. Paperone fa un controllo veloce in cache, se restituisce qualcosa passa al punto 5 
-3. Paperone interroga il database per ottenere i dati grezzi
-4. Paperone elabora i dati grezzi e li salva in cache
-5. Paperone restituisce i dati elaborati
-6. Grafana usa i dati per creare una dashboard
+I dati elaborati vengono poi utilizzati da Grafana per la generazione delle dashboard.
 
 ---
 
-#### Database  
-La relazione con il database è gestita tramite l'ORM SQLAlchemy. I modelli sono definiti nella sottocartella **./models**, mentre i metodi di inserimento, modifica e lettura si trovano nella cartella **./services/{d+*}_repository.py**, dove **{d+*}** può essere **issue**, **product** o **test**.  
-  
-> Lo scopo del database è quello di ridurre le richieste alle fonti (YouTrack) e abbassare i tempi necessari per fornire i dati a Grafana. 
+## Servizi
 
-**Struttura database**  
-Il database PostgreSQL è composto da tabelle collegate tra loro mediante relazioni. Le tabelle sono:  
-- **Issue** che contiene i campi id ,youtrack_id, id_readable, summary, custom_fields, parent_id, author, created e updated.  
-- **IssueCustomField** che contiene i campi id, name, issue_id, issue, value_id, value e changes.  
-- **IssueCustomFieldChange** che contiene id, field_id, field, old_value_id, old_value, new_value_id, new_value, timestamp e author.  
-- **Product**...
+Il progetto è stato sviluppato utilizzando Docker e comprende quattro servizi (container) principali:
+
+- Redis  
+  → sistema di caching utilizzato per velocizzare le risposte  
+
+- PostgreSQL  
+  → database relazionale che ospita i dati del progetto  
+
+- Paperone  
+  → server sviluppato in FastAPI (Python)  
+  → si occupa di:
+    - interrogare le fonti esterne  
+    - leggere/scrivere dal database  
+    - elaborare i dati  
+    - fornire i dati a Grafana tramite API  
+
+- Grafana  
+  → piattaforma di visualizzazione  
+  → utilizza i dati forniti da Paperone per costruire le dashboard  
+
+---
+
+## Sicurezza
+
+Attualmente il progetto non prevede un sistema di sicurezza strutturato.
+
+- L’unico livello di protezione presente è quello offerto da Grafana  
+## Il concetto di OKR
+
+Un OKR (Objective and Key Results) è un indicatore utilizzato per valutare le performance rispetto a specifici obiettivi.
+
+Nel nostro caso, gli OKR definiti sono i seguenti:
+
+- OKR 1: Defect-rate  
+- OKR 2: Tempo di esecuzione dei test  
+- OKR 3: Test per FTE  
+- OKR 4: Validation  
+
+---
+
+## OKR 1: Defect-rate
+
+Questo OKR misura il defect-rate, ovvero la percentuale che rappresenta il rapporto tra:
+
+- bug segnalati dai clienti  
+- totale dei bug rilevati dall’azienda  
+
+---
+
+## OKR 2: Tempo di esecuzione dei test
+
+Questo OKR misura il tempo di esecuzione della fase di test, suddiviso per attività specifiche all’interno di un intervallo temporale definito.
+
+Definizione dell’intervallo:
+- Data di inizio  
+  → dedotta dalla pubblicazione dell’RC0  
+
+- Data di fine  
+  → approssimata dalla pubblicazione del changelog  
+
+---
+
+### Assunzioni
+
+- Un membro del team non esegue test se ha validation assegnati e in lavorazione  
+- I validation sono suddivisi in sessioni distinte  
+
+---
+
+### Regole di calcolo
+
+- Vengono considerate solo le sessioni di validation successive alla pubblicazione dell’RC0  
+- Se una sessione attraversa il momento di pubblicazione dell’RC0:  
+  → viene conteggiato solo il tempo compreso tra RC0 e la fine della lavorazione  
+
+---
+
+## OKR 3: Test per FTE
+
+Questo OKR misura il rapporto tra:
+
+- numero di test eseguiti  
+- FTE (Full-Time Equivalent)  
+
+L’FTE rappresenta l’unità di misura del lavoro ed è calcolato come:
+
+- somma delle ore lavorative settimanali dei membri del team  
+
+Nel contesto di questo progetto:
+- viene utilizzata come unità di riferimento un periodo di 2 settimane lavorative  
+
+## OKR 4: Validation
+
+Questo OKR misura diversi aspetti legati al processo di lavorazione dei validation.
+
+---
+
+### Premesse
+
+A causa della mancanza di dati fondamentali per stimare con precisione il ciclo di vita dei validation, sono state introdotte alcune assunzioni per ricavare in modo approssimativo le informazioni mancanti:
+
+- Un membro del TCoE lavora su un solo validation alla volta  
+- Ogni validation è gestito da una sola persona alla volta  
+- Una volta iniziata una sessione di lavorazione, il membro continua fino alla conclusione della sessione  
+  → la sessione termina quando lo stage viene impostato a `Blocked` o `Done`  
+- Un membro del team non esegue test se ha validation ancora assegnati da lavorare  
+- Tutti i membri lavorano a tempo pieno:  
+  → dalle 09:00 CET alle 18:00 CET  
+  → dal lunedì al venerdì (festivi esclusi)  
+
+---
+
+### Logiche di calcolo
+
+In assenza di dati diretti, le fasi di vita dei validation vengono stimate a partire da eventi osservabili.
+
+#### Eventi principali
+
+Per ogni validation vengono identificati due eventi chiave:
+
+- Assegnazione  
+  → cambio del campo `assignee`  
+
+- Fine lavorazione  
+  → quando lo stage viene impostato a `Done` o `Blocked`  
+
+Per ogni evento di fine lavorazione viene associata l'assegnazione più recente precedente.
+
+---
+
+#### Derivazione degli intervalli
+
+A partire dalle coppie (assegnazione, fine lavorazione) si ricavano:
+
+- Inizio lavorazione  
+  → è la data più vicina tra:  
+    - il completamento del validation precedente  
+    - l'assegnazione del validation corrente  
+
+- Code (queue)  
+  → insieme dei completamenti di altre sessioni di lavorazione dello stesso assignee  
+    compresi tra assegnazione e inizio lavorazione  
+
+- Prima assegnazione al TCoE  
+  → assegnazione meno recente  
+
+- Ultimo completamento  
+  → fine lavorazione più recente  
+
+---
+
+#### Intervalli temporali
+
+Da questi eventi vengono definiti i seguenti intervalli:
+
+- Lavorazione  
+  → da inizio lavorazione a fine lavorazione  
+
+- Idle  
+  → da assegnazione a inizio lavorazione  
+
+- Non in mano al TCoE  
+  → tutto il tempo restante  
+
+---
+
+### Classificazione (bucket) dei validation
+
+I validation vengono suddivisi in quattro categorie principali in base alla fix version e al momento della release di RC0:
+
+- Pre  
+  → validation assegnati e completati prima della release di RC0  
+
+- During  
+  → validation assegnati e completati dopo la release di RC0  
+
+- Slipped_to_TCoE  
+  → validation assegnati prima di RC0 ma completati dopo  
+    per cause imputabili al TCoE  
+
+- Slipped_not_to_TCoE  
+  → validation assegnati prima di RC0 ma completati dopo  
+    per cause non imputabili al TCoE  
+    (es. bug scoperti in fase di pre-release e risolti successivamente)  
+
+## Workflows
+
+Il progetto è quasi completamente automatizzato. Tuttavia, la raccolta dei dati da BugIA e dal License Server non è ancora automatizzabile, pertanto alcuni dati devono essere inseriti manualmente.
+
+Il progetto prevede due workflow principali:
+- Raccolta dati  
+- Generazione dashboard  
+
+---
+
+### Raccolta dati
+
+Il prelievo dei dati avviene da diverse fonti:
+
+- YouTrack  
+  → da cui vengono recuperati i dati delle issue e i relativi Custom Fields  
+
+- Cartella ./bugia_csv  
+  → contiene i file CSV da cui vengono estratti i dati dei test  
+
+- Wiki dei changelog delle firmware versions  
+  → da cui vengono recuperate le informazioni sulle pubblicazioni dei changelog per ciascuna versione firmware  
+
+- Mapper custom  
+  → definito manualmente nel file:  
+    ./services/product_repository.py  
+
+Nota:
+Non essendo disponibile un accesso diretto a BugIA e al License Server:
+- i dati dei test vengono importati dai CSV presenti in ./bugia_csv  
+- le pubblicazioni delle release candidate (RC) sono attualmente hardcoded  
+
+---
+
+### Generazione dashboard
+
+Flusso di generazione:
+
+1. Grafana interroga un endpoint di Paperone  
+2. Paperone verifica la presenza dei dati in cache (Redis)  
+   → se presenti, salta direttamente al punto 5  
+3. Se i dati non sono in cache, Paperone interroga il database per ottenere i dati grezzi  
+4. Paperone elabora i dati grezzi e li salva in cache  
+5. Paperone restituisce i dati elaborati  
+6. Grafana utilizza i dati per costruire la dashboard  
+
+---
+
+### Database
+
+L’interazione con il database è gestita tramite l’ORM SQLAlchemy.
+
+Struttura:
+- Modelli  
+  → definiti nella cartella:  
+    ./models  
+
+- Repository (accesso ai dati)  
+  → definiti nella cartella:  
+    ./services/{*}_repository.py  
+
+Dove { * } può assumere i seguenti valori:
+- issue  
+- product  
+- test  
+
+I repository contengono i metodi per:
+- inserimento dei dati  
+- modifica dei dati  
+- lettura dei dati  
+
+
+## Struttura delle relazioni
+
+### Issue
+- Relazione con IssueCustomField  
+  issue.id_readable = issueCustomField.issue_id  
+  → Serve per recuperare i custom field associati a una issue
+
+---
+
+### IssueCustomField 
+- Relazione con FieldValue  
+  issueCustomField.value_id = field_value.id  
+  → Permette di ottenere il valore corrente del custom field
+
+---
+
+### IssueCustomFieldChange
+- Relazione con IssueCustomField  
+  issueCustomFieldChange.field_id = issueCustomField.id  
+  → Identifica quale custom field è stato modificato
+
+- Relazione con FieldValue (valore precedente)  
+  issueCustomFieldChange.old_value_id = field_value.id  
+  → Valori rimossi nella transazione
+
+- Relazione con FieldValue (valore nuovo)  
+  issueCustomFieldChange.new_value_id = field_value.id  
+  → Valori aggiunti nella transazione
+
+---
+
+### FieldValue
+- Rappresenta un valore generico di un campo  
+- Relazione con Value (tabella polimorfica)  
+  field_value.id = value.id  
+  → Il valore reale si ottiene tramite le tabelle figlie di value
+
+---
+
+### Value (tabella polimorfica)
+- Contiene un campo "type" per distinguere il tipo di dato  
+- Relazione:  
+  value.id = <tabella_figlia>.id  
+
+#### Tabelle figlie:
+- date_values   → valori di tipo data  
+- number_value  → valori numerici  
+- string_value  → stringhe  
+- time_value    → valori temporali  
+
+---
+
+## Riassunto veloce
+Issue → IssueCustomField → FieldValue → Value → Tabelle figlie  
+IssueCustomFieldChange traccia le modifiche (old_value / new_value)
