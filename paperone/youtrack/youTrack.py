@@ -1,24 +1,23 @@
-import os
-import requests
-import aiohttp
-from datetime import datetime,timezone
-import asyncio
-import threading
-from concurrent.futures import ThreadPoolExecutor
-
-from services.issue_repository import IssueRepository
-
 from services.redis_client import (
     set_youtrack_last_sync,
     get_youtrack_last_sync
 )
-import json
-
+from services.issue_repository import IssueRepository
 from services.logger import logger
+
+from concurrent.futures import ThreadPoolExecutor
+
+from datetime import datetime,timezone
+
+import aiohttp
+import asyncio
+import json
+import os
+
 
 
 """
-    youTrack_worker perform 1 cicle every 24 hours,
+    youTrack_worker perform 1 cicle every <update_frequency> hours,
     in each cicle he fetches Issue and Ativityitems data from YouTrack (if he has info abt a previous update he only takes data since 1h before last update),
     then uses IssueRepository to save the items
 """
@@ -31,7 +30,7 @@ YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 update_frequency = 1
 
 #YouTrack will return issues matching the following query
-base_query= 'project: Kalliope'
+base_query= ''#'project: Kalliope'
 
 #YouTrack requires us to declare the name of the fields we want him to return in the API requests
 fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
@@ -43,7 +42,7 @@ activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,na
 activity_item_category = 'CustomFieldCategory'
 
 def update_query(last_update):
-    return f"{base_query} updated: {last_update} .. Now"
+    return base_query#f"{base_query} updated: {last_update} .. Now"
 
 
 

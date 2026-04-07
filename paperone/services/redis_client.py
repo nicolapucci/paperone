@@ -22,7 +22,7 @@ def get_custom_field_id_mapper():
     mapper = redis_client.get('custom_field_id_mapper')
     if not mapper:
         return None
-    return None#json.loads(mapper)
+    return json.loads(mapper)
 
 def set_custom_field_id_mapper(mapper:dict):
     redis_client.set('custom_field_id_mapper',json.dumps(mapper))
@@ -31,7 +31,7 @@ def set_custom_field_id_mapper(mapper:dict):
 
 def get_changelog_releases():
     releases = redis_client.hgetall('changelog_releases')
-    return None#{k: datetime.datetime.fromtimestamp(float(v)) for k, v in releases.items()}
+    return {k: datetime.datetime.fromtimestamp(float(v)) for k, v in releases.items()}
 
 def set_changelog_releases(releases:dict):
     redis_client.delete('changelog_releases')
@@ -51,7 +51,7 @@ def get_okr2_data():
         for k,v in item.items():
             if isinstance(v,dict):
                 item[k] = datetime.datetime.fromtimestamp(float(v["value"])) if v["type"] == "datetime" else datetime.timedelta(seconds=float(v["value"]))
-    return None#data
+    return data
 
 def set_okr2_data(data:list):
     new_list = []
@@ -81,7 +81,7 @@ def get_okr4_data():
         for k,v in item.items():
             if isinstance(v,dict):
                 item[k] = datetime.datetime.fromtimestamp(float(v["value"])) if v["type"] == "datetime" else datetime.timedelta(seconds=float(v["value"]))
-    return None#data
+    return data
 
 def set_okr4_data(data:list):
     new_list = []

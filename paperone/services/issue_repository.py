@@ -57,22 +57,18 @@ from collections import defaultdict
 import bisect
 
 """
-    issue_repository è una classe dichiarata che contiene due grandi funzionalità:
-    -inserimento e aggiornamento dati;
-    -analisi dei bug;
-    -statistiche di validazione e OKR e
-    -gestione cache.
+    issue_repository gestisce iserimento/lettura/elaborazione dei dati delle Issue principalmente:
+        -inserimento e aggiornamento dati
+        -analisi e metriche OKR
 """
 
 utc = pytz.UTC
-
-BATCH_SIZE = 1000
 
 TCoE_MEMBERS = ['Sara Tinghi', 'Simona rossi', 'Giuseppe Fragalà', 'Tommaso Capiferri', 'Nicola Montagnani']
 
 ITERVALLO_MEDIA_MOBILE = timedelta(days= (6*30))#6 mesi
 
-WORKING_SESSION_TRESHOLD = 5 #minimunm number of working session in a bucket to find it reliable
+avg_val_duration = timedelta(hours=5)
 
 #definizione della funzione che calcola quanto tempo lavorativo passa tra due date
 def working_hours_only_timedelta(end_date:datetime,start_date:datetime):
@@ -122,7 +118,7 @@ def extract_field_name(targetMember:str):
 
 #definizione della funzione che serve a creare un oggetto della classe value scelto in 
 #base al tipo dell'item passato 
-def get_value_obj(item, uuid,field_name:None):
+def get_value_obj(item, uuid,field_name = None):
     # Se item è un dizionario, prendi il valore associato a 'name', altrimenti usa item stesso
     
     misbehaving_targets = ['Estimation','Time Left','Spent time']
@@ -270,13 +266,13 @@ class IssueRepository:
                             if isinstance(value,list):
                                 for item in value:
                                     try:
-                                        value_item = get_value_obj(item,new_uuid)
+                                        value_item = get_value_obj(item,new_uuid,None)
                                         value_rows.append(value_item)
                                     except Exception as e:
-                                        logger.warning(f"unable to create Value item: {value} / {name} / {id_readable}")    
+                                        logger.warning(f"unable to create Value item: {e} -- {item} / {name} / {id_readable}")    
                             else:
                                 try:
-                                    value_item = get_value_obj(value,new_uuid)
+                                    value_item = get_value_obj(value,new_uuid,None)
                                     value_rows.append(value_item)
                                 except Exception as e:
                                     logger.warning(f"unable to create Value item: {value} / {name} / {id_readable}")
@@ -364,6 +360,7 @@ class IssueRepository:
                 added = data.get('added')
 
                 field_name = extract_field_name(targetMember)
+                
                 customField_id = custom_field_id_mapper.get(f"{field_name}/{issue_id_readable}",None)
 
 
@@ -382,7 +379,7 @@ class IssueRepository:
                         if isinstance(rm,list):
                             for item in rm:
                                 try:
-                                    value_obj = get_value_obj(item,rm_uuid,field_name) if field_name
+                                    value_obj = get_value_obj(item,rm_uuid,field_name)
                                     value_rows.append(value_obj)
                                 except Exception as e:
                                     logger.warning(f"unable to create Value item: {item} / {field_name} / {issue_id_readable}")
@@ -784,11 +781,15 @@ class IssueRepository:
         for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,first_assigned_to_TCoE,last_set_as_done,fix_version,queue,previous_session_stop_ts in validation_data:
             assigned_ts = assigned_ts if assigned_ts is not None else first_assigned_to_TCoE
 
+
             if assigned_ts is None or last_set_as_done is None:
                 continue
                 #logger.warning(f"smt is wrong {assigned_ts} - {last_set_as_done} / {id_readable}")
 
             elif fix_version in rc0_releases.keys() and fix_version in changelog_releases.keys():
+                
+                stop_ts = min(stop_ts,convert_to_timezone_aware(changelog_releases[fix_version]))
+
                 if fix_version not in buckets.keys():
                     
                     buckets[fix_version] = {
@@ -913,8 +914,6 @@ class IssueRepository:
 
         validation_data = IssueRepository.validation_changes()
 
-        logger.debug(f"validation_data contains {len(validation_data)} sessions")
-
         rc0_releases = ProductRepository.rc0_releases()
         #changelog_releases = ProductRepository.changelog_releases()
             
@@ -935,20 +934,21 @@ class IssueRepository:
                 stop_ts = convert_to_timezone_aware(stop_ts) if stop_ts else None
                 previous_session_stop_ts = convert_to_timezone_aware(previous_session_stop_ts) if previous_session_stop_ts else None
                 
-                if id_readable not in validations.keys():
-                    validations[id_readable] = {
-                        "first_assigned_to_TCoE":first_assigned_to_TCoE,
-                        "last_set_as_Done":last_set_as_done,
-                        "fix_version":fix_version,
-                        "time_spent":timedelta(0),
-                        "idle_time":timedelta(0),
-                        "working_sessions":0,
-                        "queue":0
-                    }
 
                 if assigned_ts is not None:
+                    if id_readable not in validations.keys():
+                        validations[id_readable] = {
+                            "first_assigned_to_TCoE":first_assigned_to_TCoE,
+                            "last_set_as_Done":last_set_as_done,
+                            "fix_version":fix_version,
+                            "time_spent":timedelta(0),
+                            "idle_time":timedelta(0),
+                            "working_sessions":0,
+                            "queue":0
+                        }
+
                     working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts] if date is not None)
-                    if working_session_start and stop_ts:
+                    if working_session_start:#if it doesn't have a working session start it mean TCoE never worked on this Validation
                         validations[id_readable]["time_spent"] += working_hours_only_timedelta(stop_ts,working_session_start)
                         validations[id_readable]["idle_time"] += working_hours_only_timedelta(working_session_start,assigned_ts)
                         validations[id_readable]["working_sessions"] += 1
@@ -956,8 +956,6 @@ class IssueRepository:
 
                         if assigned_ts < rc0_release and stop_ts > rc0_release:#se la working session è a cavallo dell'rc0 è slipped al TCoE
                             validations[id_readable]['bucket'] = 'slipped_to_TCoE'
-
-
 
         for id_readable,validation_info in validations.items():
 
@@ -972,7 +970,8 @@ class IssueRepository:
                     "idle_time":timedelta(0),
                     "queue":0
                     }}
-                
+
+ 
             bucket = validation_info.get('bucket',None)
             if not bucket:
                 start = validation_info['first_assigned_to_TCoE']
@@ -985,6 +984,7 @@ class IssueRepository:
                     else:
                         bucket = 'slipped_not_to_TCoE'#nel caso sia uno slipped ma nessuna sessione sia imputabile al TCoE
                 else:
+                    logger.debug(f"unable to fit {id_readable} in a bucket {fix_version}")
                     bucket = None#caso in cui per qualche motivo non ho inizio e/o fine
 
             if bucket not in fix_versions_dict[fix_version].keys() and bucket is not None:
@@ -1044,4 +1044,224 @@ class IssueRepository:
 
         return okr4_data
 
+
+    @staticmethod
+    def okr4_test():
+        
+        #quick redis check
+        data = get_okr4_data()
+        #if data:
+            #return data
+
+        validation_data = IssueRepository.validation_changes()
+
+        rc0_releases = ProductRepository.rc0_releases()
+        #changelog_releases = ProductRepository.changelog_releases()
+            
+        #uso questo dict per creare la divisione in fw release e buckets
+        fix_versions_dict = {}
+
+        validations = {}
+
+        for id_readable,stop_ts,assigned_ts,custom_field_value,assignee,first_assigned_to_TCoE,last_set_as_done,fix_version,queue,previous_session_stop_ts in validation_data:
+            if fix_version in rc0_releases.keys():
+                rc0_release = convert_to_timezone_aware(rc0_releases[fix_version])
+                assigned_ts = convert_to_timezone_aware(
+                    assigned_ts
+                    ) if assigned_ts else convert_to_timezone_aware(
+                        first_assigned_to_TCoE
+                        ) if first_assigned_to_TCoE else None
+
+                stop_ts = convert_to_timezone_aware(stop_ts) if stop_ts else None
+                previous_session_stop_ts = convert_to_timezone_aware(previous_session_stop_ts) if previous_session_stop_ts else None
+                
+
+                if assigned_ts is not None:
+                    if id_readable not in validations.keys():
+                        validations[id_readable] = {
+                            "first_assigned_to_TCoE":first_assigned_to_TCoE,
+                            "last_set_as_Done":last_set_as_done,
+                            "fix_version":fix_version,
+                            "time_spent":timedelta(0),
+                            "idle_time":timedelta(0),
+                            "working_sessions":0,
+                            "queue":0
+                        }
+
+                    working_session_start = max(date for date in [assigned_ts,previous_session_stop_ts] if date is not None)
+                    if working_session_start:#if it doesn't have a working session start it mean TCoE never worked on this Validation
+                        validations[id_readable]["time_spent"] += working_hours_only_timedelta(stop_ts,working_session_start)
+                        validations[id_readable]["idle_time"] += working_hours_only_timedelta(working_session_start,assigned_ts)
+                        validations[id_readable]["working_sessions"] += 1
+                        validations[id_readable]["queue"] += queue
+
+                        if assigned_ts < rc0_release and stop_ts > rc0_release:#se la working session è a cavallo dell'rc0 è slipped al TCoE
+                            validations[id_readable]['bucket'] = 'slipped_to_TCoE'
+
+        assignements_history = defaultdict(list)
+
+        for id_readable,validation_info in validations.items():
+
+            rc0_release = convert_to_timezone_aware(rc0_releases[validation_info["fix_version"]])
+            fix_version = validation_info["fix_version"]
+
+            if convert_to_timezone_aware(validation_info['first_assigned_to_TCoE']) < convert_to_timezone_aware(rc0_releases[fix_version]):
+                assignements_history[fix_version].append(validation_info['first_assigned_to_TCoE'])
+
+            if fix_version not in fix_versions_dict.keys():
+                fix_versions_dict[fix_version] = {"tot":{
+                    "count":0,
+                    "time_spent":timedelta(0),
+                    "working_sessions":0,
+                    "idle_time":timedelta(0),
+                    "queue":0
+                    }}
+
+ 
+            bucket = validation_info.get('bucket',None)
+            if not bucket:
+                start = validation_info['first_assigned_to_TCoE']
+                end = validation_info['last_set_as_Done']
+                if start is not None and end is not None:
+                    if start < rc0_release and end < rc0_release:
+                        bucket = 'pre'
+                    elif start > rc0_release and end > rc0_release:
+                        bucket = 'during'
+                    else:
+                        bucket = 'slipped_not_to_TCoE'#nel caso sia uno slipped ma nessuna sessione sia imputabile al TCoE
+                else:
+                    logger.debug(f"unable to fit {id_readable} in a bucket {fix_version}")
+                    bucket = None#caso in cui per qualche motivo non ho inizio e/o fine
+
+            if bucket not in fix_versions_dict[fix_version].keys() and bucket is not None:
+                fix_versions_dict[fix_version][bucket] = {
+                    "count":0,
+                    "time_spent":timedelta(0),
+                    "working_sessions":0,
+                    "idle_time":timedelta(0),
+                    "queue":0
+                    }
+            if bucket is not None:
+                fix_versions_dict[fix_version][bucket]["count"] += 1
+                fix_versions_dict[fix_version][bucket]["working_sessions"] += validation_info["working_sessions"]
+                fix_versions_dict[fix_version][bucket]["time_spent"] += validation_info["time_spent"]
+                fix_versions_dict[fix_version][bucket]["idle_time"] += validation_info["idle_time"]
+                fix_versions_dict[fix_version][bucket]["queue"] += validation_info["queue"]
+
+            fix_versions_dict[fix_version]["tot"]["count"] += 1
+            fix_versions_dict[fix_version]["tot"]["working_sessions"] += validation_info["working_sessions"]
+            fix_versions_dict[fix_version]["tot"]["time_spent"] += validation_info["time_spent"]
+            fix_versions_dict[fix_version]["tot"]["idle_time"] += validation_info["idle_time"]
+            fix_versions_dict[fix_version]["tot"]["queue"] += validation_info["queue"]
+
+
+        okr4_data = []
+
+        logger.debug(assignements_history)
+
+        for fix_version, version_info in fix_versions_dict.items():
+            tot_count = version_info['tot']['count']
+
+            version_assignements_history = assignements_history.get(fix_version)
+            
+
+            rc0_release = rc0_releases[fix_version]
+            
+
+            prob_overflow = 0
+            if version_assignements_history is not None:
+                version_assignements_history.sort(reverse=True)
+                for i in range(0,len(version_assignements_history)):
+                    max_teoric = working_hours_only_timedelta(rc0_release,version_assignements_history[i]) / avg_val_duration
+                    overflow = (i+1)-max_teoric if i>max_teoric else 0
+                    prob_overflow = max([prob_overflow,overflow])
+            
+
+            try:
+                overflow = min([prob_overflow,version_info['pre']['count']])
+            except Exception as e:
+                logger.debug(version_info)
+                overflow = prob_overflow
+
+            grafana_formatted_item = {
+                "date": rc0_release,
+                "Fix Version": fix_version,
+                "Count": tot_count,
+                "Assignements Overflow": overflow
+            }
+
+            #calcolo le medie e formatto il risultato per essere facilmente usabile in grafana
+            for bucket, bucket_info in version_info.items():
+                
+                if tot_count>0:
+                    count = bucket_info['count']
+                    working_sessions = bucket_info["working_sessions"]
+                    time_spent = bucket_info["time_spent"]
+                    idle_time = bucket_info["idle_time"]
+
+                    validation_average_time_spent = time_spent / count if count > 0 else None
+                    working_session_average_time_spent = time_spent / working_sessions if working_sessions > 0 else None
+                    average_idle_time = idle_time / count if count > 0 else None
+                    average_queue_count = bucket_info["queue"] / count if count > 0 else None
+                    
+                    if bucket != 'tot':
+                        if bucket == 'slipped_to_TCoE':
+                            count = count - overflow
+                            grafana_formatted_item[f"overAssigned_percentage"] = overflow / tot_count    
+                        grafana_formatted_item[f"{bucket}_percentage"] = count / tot_count
+                    
+                    if time_spent > timedelta(0) or idle_time > timedelta(0):
+                        grafana_formatted_item[f"{bucket}_time"] = time_spent / (time_spent + idle_time)
+                        grafana_formatted_item[f"{bucket}_idle"] = idle_time / (time_spent + idle_time)
+                    grafana_formatted_item[f"{bucket}_queue"] = average_queue_count
+            
+            okr4_data.append(grafana_formatted_item)
+        
+        #cache results
+        set_okr4_data(okr4_data)
+    
+
+        return okr4_data
+
+
+    @staticmethod
+    def prova():
+        
+        validation_data = IssueRepository.validation_changes()
+        changelog_releases = get_changelog_releases()
+
+
+        validations = defaultdict(list)
+
+        for item in validation_data:
+            id_readable = item[0]
+            last_set_as_done = item[6]
+            if convert_to_timezone_aware(last_set_as_done) > convert_to_timezone_aware(changelog_releases[item[7]]):
+                validations[id_readable].append(item)
+
+        incomplete_dreakdown  = defaultdict(dict)
+
+        for id_readable,sessions in validations.items():
+            sessions.sort(key=lambda x:x[2],reverse=True)
+
+            fix_version = item[7]
+
+            last_session = sessions[0]
+
+            last_assignement = last_session[2]
+
+            if convert_to_timezone_aware(last_assignement) > convert_to_timezone_aware(changelog_releases[fix_version]):
+                
+                previous_stage = session[1][3]
+                if previous_stage is not None and previous_stage not in incomplete_dreakdown[fix_version].keys():
+                    incomplete_dreakdown[fix_version][previous_stage] = 0
+                incomplete_dreakdown[fix_version][previous_stage] += 1
+            else:
+                
+                if not 'lost' in incomplete_dreakdown[fix_version].keys():
+
+                    incomplete_dreakdown[fix_version]['lost'] = 0
+                
+                incomplete_dreakdown[fix_version]['lost'] += 1
+        
 

@@ -1,9 +1,14 @@
 fastapi
 uvicorn
-requests
+
 sqlalchemy
 psycopg2-binary
+
 redis
+
 aiohttp
+requests
+
 pytz
+
 bs4
