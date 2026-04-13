@@ -2,6 +2,8 @@
 **/.venv/**
 **/__pycache__/**
 
+**/**.sql
+
 **/logs/**
 
 **/prova.txt
@@ -17,3 +19,4 @@
 **/grafana.json
 **/tests_over_fte.json
 **/media_mobile.json
+**/**.save

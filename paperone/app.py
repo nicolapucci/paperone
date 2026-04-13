@@ -4,8 +4,9 @@ import uvicorn
 import subprocess
 from models.base import Base
 from services.postgres_engine import engine
-from services.test_repository import TestRepository
 from services.product_repository import ProductRepository
+from services.logger import logger
+from services.test_repository import okr3
 
 app = FastAPI()
 
@@ -14,6 +15,7 @@ Base.metadata.create_all(engine)
 
 @app.on_event("startup")
 async def startup_event():
+    logger.debug('launching startup')
     subprocess.Popen(["python", "-m", "youtrack.youTrack"])
 #    TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
 
@@ -25,13 +27,13 @@ def OKR1():
 def OKR2():
     return IssueRepository.okr2()
 
-@app.get('/test-over-fte')
+@app.get('/okr3')
 def fte():
-    return TestRepository.test_over_fte()
+    return okr3()
 
 @app.get('/okr4')
 def OKR4():
-    return IssueRepository.okr4()
+    return IssueRepository.okr4_test()
 
 
 

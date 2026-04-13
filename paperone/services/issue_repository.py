@@ -1050,13 +1050,13 @@ class IssueRepository:
         
         #quick redis check
         data = get_okr4_data()
-        #if data:
-            #return data
+        if data:
+            return data
 
         validation_data = IssueRepository.validation_changes()
 
         rc0_releases = ProductRepository.rc0_releases()
-        #changelog_releases = ProductRepository.changelog_releases()
+        changelog_releases = ProductRepository.changelog_releases()
             
         #uso questo dict per creare la divisione in fw release e buckets
         fix_versions_dict = {}
@@ -1122,8 +1122,11 @@ class IssueRepository:
             if not bucket:
                 start = validation_info['first_assigned_to_TCoE']
                 end = validation_info['last_set_as_Done']
+                changelog_release = changelog_releases[validation_info['fix_version']] if validation_info['fix_version'] in changelog_releases.keys() else None
                 if start is not None and end is not None:
-                    if start < rc0_release and end < rc0_release:
+                    if changelog_release and convert_to_timezone_aware(end) > convert_to_timezone_aware(changelog_release):
+                        bucket = 'post_changelog'
+                    elif start < rc0_release and end < rc0_release:
                         bucket = 'pre'
                     elif start > rc0_release and end > rc0_release:
                         bucket = 'during'
@@ -1157,8 +1160,6 @@ class IssueRepository:
 
         okr4_data = []
 
-        logger.debug(assignements_history)
-
         for fix_version, version_info in fix_versions_dict.items():
             tot_count = version_info['tot']['count']
 
@@ -1178,7 +1179,7 @@ class IssueRepository:
             
 
             try:
-                overflow = min([prob_overflow,version_info['pre']['count']])
+                overflow = min([prob_overflow,version_info['slipped_to_TCoE']['count']])
             except Exception as e:
                 logger.debug(version_info)
                 overflow = prob_overflow
@@ -1195,13 +1196,9 @@ class IssueRepository:
                 
                 if tot_count>0:
                     count = bucket_info['count']
-                    working_sessions = bucket_info["working_sessions"]
                     time_spent = bucket_info["time_spent"]
                     idle_time = bucket_info["idle_time"]
 
-                    validation_average_time_spent = time_spent / count if count > 0 else None
-                    working_session_average_time_spent = time_spent / working_sessions if working_sessions > 0 else None
-                    average_idle_time = idle_time / count if count > 0 else None
                     average_queue_count = bucket_info["queue"] / count if count > 0 else None
                     
                     if bucket != 'tot':
@@ -1213,6 +1210,8 @@ class IssueRepository:
                     if time_spent > timedelta(0) or idle_time > timedelta(0):
                         grafana_formatted_item[f"{bucket}_time"] = time_spent / (time_spent + idle_time)
                         grafana_formatted_item[f"{bucket}_idle"] = idle_time / (time_spent + idle_time)
+                        grafana_formatted_item[f"avg_{bucket}_time"] = time_spent / count if count > 0 else 0
+                        grafana_formatted_item[f"avg_{bucket}_idle"] = idle_time / count if count > 0 else 0
                     grafana_formatted_item[f"{bucket}_queue"] = average_queue_count
             
             okr4_data.append(grafana_formatted_item)
@@ -1222,46 +1221,3 @@ class IssueRepository:
     
 
         return okr4_data
-
-
-    @staticmethod
-    def prova():
-        
-        validation_data = IssueRepository.validation_changes()
-        changelog_releases = get_changelog_releases()
-
-
-        validations = defaultdict(list)
-
-        for item in validation_data:
-            id_readable = item[0]
-            last_set_as_done = item[6]
-            if convert_to_timezone_aware(last_set_as_done) > convert_to_timezone_aware(changelog_releases[item[7]]):
-                validations[id_readable].append(item)
-
-        incomplete_dreakdown  = defaultdict(dict)
-
-        for id_readable,sessions in validations.items():
-            sessions.sort(key=lambda x:x[2],reverse=True)
-
-            fix_version = item[7]
-
-            last_session = sessions[0]
-
-            last_assignement = last_session[2]
-
-            if convert_to_timezone_aware(last_assignement) > convert_to_timezone_aware(changelog_releases[fix_version]):
-                
-                previous_stage = session[1][3]
-                if previous_stage is not None and previous_stage not in incomplete_dreakdown[fix_version].keys():
-                    incomplete_dreakdown[fix_version][previous_stage] = 0
-                incomplete_dreakdown[fix_version][previous_stage] += 1
-            else:
-                
-                if not 'lost' in incomplete_dreakdown[fix_version].keys():
-
-                    incomplete_dreakdown[fix_version]['lost'] = 0
-                
-                incomplete_dreakdown[fix_version]['lost'] += 1
-        
-

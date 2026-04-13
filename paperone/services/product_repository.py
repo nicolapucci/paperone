@@ -186,7 +186,7 @@ class ProductRepository:
 
         if releases:
             return releases
-        print('not found in redis')
+
         response = requests.get(wiki_changelog_url)
 
         response.raise_for_status()

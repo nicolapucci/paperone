@@ -30,7 +30,7 @@ YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 update_frequency = 1
 
 #YouTrack will return issues matching the following query
-base_query= ''#'project: Kalliope'
+base_query= 'project: Kalliope'
 
 #YouTrack requires us to declare the name of the fields we want him to return in the API requests
 fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
@@ -42,7 +42,7 @@ activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,na
 activity_item_category = 'CustomFieldCategory'
 
 def update_query(last_update):
-    return base_query#f"{base_query} updated: {last_update} .. Now"
+    return f"{base_query} updated: {last_update} .. Now"
 
 
 
@@ -158,7 +158,7 @@ async def process_activity_items(executor, query):#Uses ThreadPoolExecutor to co
     return
 
 async def youTrack_worker():
-
+    logger.debug('worker start')
     while True:
         logger.info("Starting Issue sync...")
 
@@ -173,7 +173,7 @@ async def youTrack_worker():
             with ThreadPoolExecutor(max_workers=5) as executor:
                 await process_issues(executor,query)
 
-            with ThreadPoolExecutor(max_workers=10) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 await process_activity_items(executor,query)
 
             logger.info("YouTrack Sync successfully completed")
