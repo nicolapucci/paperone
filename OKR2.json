@@ -168,7 +168,6 @@
                       "datasource": {
                         "name": "-- Dashboard --"
                       },
-                      "group": "datasource",
                       "kind": "DataQuery",
                       "spec": {
                         "panelId": 2,
@@ -363,7 +362,6 @@
                       "datasource": {
                         "name": "-- Dashboard --"
                       },
-                      "group": "datasource",
                       "kind": "DataQuery",
                       "spec": {
                         "panelId": 2,
@@ -541,7 +539,7 @@
       "to": "2026-02-05T23:00:00.000Z"
     },
     "title": "OKR2",
-    "variables": [
+    "variables": [  
       {
         "kind": "QueryVariable",
         "spec": {

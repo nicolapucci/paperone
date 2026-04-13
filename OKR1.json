@@ -209,7 +209,6 @@
                       "datasource": {
                         "name": "-- Dashboard --"
                       },
-                      "group": "datasource",
                       "kind": "DataQuery",
                       "spec": {
                         "panelId": 1,
@@ -423,7 +422,6 @@
                       "datasource": {
                         "name": "-- Dashboard --"
                       },
-                      "group": "datasource",
                       "kind": "DataQuery",
                       "spec": {
                         "panelId": 1,
