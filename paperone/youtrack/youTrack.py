@@ -30,7 +30,7 @@ YOUTRACK_URL = os.getenv('YOUTRACK_URL')
 update_frequency = 1
 
 #YouTrack will return issues matching the following query
-base_query= 'project: Kalliope'
+base_query= 'project: Kalliope, TCoE'
 
 #YouTrack requires us to declare the name of the fields we want him to return in the API requests
 fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
