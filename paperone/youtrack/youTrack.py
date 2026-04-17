@@ -33,7 +33,7 @@ update_frequency = 1
 base_query= 'project: Kalliope, TCoE'
 
 #YouTrack requires us to declare the name of the fields we want him to return in the API requests
-fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable))'
+fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable)),links(issues(idReadable),linkType(name))'
 
 #same as field but for ActivityItems
 activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value(name,text,fullName,minutes)),removed(id,idReadable,name,value(name,text,fullName,minutes)),target(id,idReadable),targetMember'

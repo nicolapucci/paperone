@@ -97,6 +97,10 @@ def working_hours_only_timedelta(end_date:datetime,start_date:datetime):
 
     return working_time
 
+def extract_fw(string:str):
+    pattern = r'\d{1,2}\.\d{1,2}\.\d{1,2}'
+    match = re.search(pattern,string)
+    return match.group(0)
 
 def convert_to_timestamp(date):
     return datetime.fromtimestamp(date/1000,tz=timezone.utc)
@@ -335,8 +339,6 @@ class IssueRepository:
     #modifiche affinchè vengano mappati i cambiamenti di valore nel tempo(più complesso del primo)
     @staticmethod
     def upsert_activity_items(activity_item_data:list):
-
-        icf = aliased(IssueCustomField)
 
         activity_item_rows = []
         field_value_rows = []
@@ -920,7 +922,7 @@ class IssueRepository:
             
 
     @staticmethod
-    def okr4():
+    def okr4_old():
         
         #quick redis check
         data = get_okr4_data()
@@ -1098,7 +1100,7 @@ class IssueRepository:
         return okr4_data
 
     @staticmethod
-    def okr4_hybrid_approach():
+    def okr4():
 
         i = aliased(Issue)
         icf = aliased(IssueCustomField)
@@ -1192,90 +1194,61 @@ class IssueRepository:
 
 
         with Session(engine) as session:
-            if session:
-                buckets = session.execute(bucket_stmt).fetchall()
+            buckets = session.execute(bucket_stmt).fetchall()
+            validations = session.execute(validations_stmt).fetchall()
+        
+        fw_time_spent = defaultdict(timedelta)
+        for name, time_spent in buckets:
+            fw_time_spent[extract_fw(name)] += time_spent
+        
+        logger.debug(fw_time_spent)        
+        
+        
+        fw_dict = defaultdict(list)
+        ignored_fw_dict = defaultdict(list)
+        for id_readable,last_set_as_done,first_assigned,fix_version in validations:
+            if first_assigned is not None and fix_version is not None:
+                last_set_as_done = last_set_as_done if last_set_as_done is not None else convert_to_timezone_aware(datetime.now())
+                fw_dict[fix_version].append((last_set_as_done,first_assigned))
+            elif fix_version is not None:
+                last_set_as_done = last_set_as_done if last_set_as_done is not None else convert_to_timezone_aware(datetime.now())
+                ignored_fw_dict[fix_version].append(last_set_as_done)
 
-                logger.debug(buckets)
-                if not buckets:
-                    return
-                validations = session.execute(validations_stmt).fetchall()
 
+        tmp = defaultdict()
+        for fw,val in fw_dict.items():
+            if fw in fw_time_spent.keys():
+                time_spent = fw_time_spent[fw]
+                avg_time_spent = time_spent/ len(val)
 
-                validations_time_spent_by_fw = {}
+                val.sort(key= lambda x:x[0], reverse=True)
+                lifespans = [c-a for c,a in val]
+                sum_lifespans = timedelta(0)
+                for l in lifespans:
+                    sum_lifespans += l
+                avg_val_lifespan = sum_lifespans / len(val)
+                timestamps = [c for c,a in val]
+                total_queue = 0
+                for v in val:
+                    left = bisect.bisect_right(timestamps, v[1])
+                    right = bisect.bisect_left(timestamps, v[0])
 
-                for summary,time_spent in buckets:
-                    pattern =  r"\d{1,2}.\d{1,2}\.\d{1,2}"
-                    match = re.search(pattern,summary)
-                    version = match.group(0)
-                    if version not in validations_time_spent_by_fw.keys():
-                        validations_time_spent_by_fw[version] = time_spent
-                    else:
-                        validations_time_spent_by_fw[version] += time_spent
-
-                tcoe_handled_and_completed_validations = []
-                ignored_validations = []
-                for validation in validations:
-                    if validation[1] is None or validation[2] is None or validation[3] is None:
-                        ignored_validations.append(validation)
-                        v1 = 0 if validation[1] is not None else 1
-                        v2 = 0 if validation[2] is not None else 2
-                        v3 = 0 if validation[3] is not None else 4
-                        missing_data_map = {1:"end",2:"start",3:"start&end",4:"fw",5:"end&fw",6:"start&fw",7:"all"}
-                        err = v1+v2+v3
-                        if err > 1:
-                            if err >= 4:
-                                logger.error(f"validation {validation[0]} has no fix version")
-                            else:
-                                logger.debug(f"{validation}")#f"{validation[0]} was not handled by TCoE")
-                        else:
-                            logger.debug(f"{validation[0]} has {missing_data_map[err]} missing, setting {'it' if err<=2 else 'them'} to now")
-                            now = convert_to_timezone_aware(datetime.now())
-                            new_val = (validation[0],now,validation[2],validation[3],)
-                            tcoe_handled_and_completed_validations.append(new_val)
-
-                    else:
-                        tcoe_handled_and_completed_validations.append(validation)
-
-                tcoe_handled_and_completed_validations.sort(key = lambda x:x[1],reverse = True)
-
-                timestamps = [s[1] for s in tcoe_handled_and_completed_validations ]
-
-                res = defaultdict()
-                for s in tcoe_handled_and_completed_validations:
-                    end = s[1]
-                    start = s[2]
-                    rc0_release = convert_to_timezone_aware(rc0_releases[s[3]]) if s[3] in rc0_releases.keys() else None
-
-                    left = bisect.bisect_right(timestamps, start)
-                    right = bisect.bisect_left(timestamps,end)
                     queue = right - left
+                    total_queue += queue
+                avg_queue = total_queue / len(val)
 
-                    bucket = 'pre' if rc0_release is None or end < rc0_release else 'during' if start >= rc0_release else 'slip'
-                    if s[3] not in res.keys():
-                        res[s[3]] = {
-                            "pre":[],
-                            "during":[],
-                            "slip":[]
-                        }
-                    if bucket not in res[s[3]].keys():
-                        res[s[3]][bucket] = []
-                    res[s[3]][bucket].append((s,queue,))
+                ignored_vals = ignored_fw_dict.get(fw,[])
 
 
-                grafana_formatted_item = []
-                for k,v in validations_time_spent_by_fw.items():
-                    if k in res.keys():
-                        buckets = [(key,len(v)) for key,v in res[k].items()]
-                        count = sum([i[1] for i in buckets])
-                        avg = v / count if count > 0 else 0
-                        grafana_formatted_obj = {"fw":k,"count":count,"time":v,"avg":avg}
-
-                        for k,v in buckets:
-                            grafana_formatted_obj[f'{k}_perc'] = v/count
-                        
-                        grafana_formatted_item.append(grafana_formatted_obj)
-                    else:
-                        logger.debug(f"version {k} has no validations worked by TCoE")
-
-
-                return grafana_formatted_item
+                tmp[fw] = {
+                    "total_time_spent":time_spent,
+                    "avg_time_spent":avg_time_spent,
+                    "avg_waiting_time":avg_val_lifespan-avg_val_duration,
+                    "queue":avg_queue,
+                    "count":len(val),
+                    "ignored_because_first_ass_is_missing":len(ignored_vals)
+                }
+            else:
+                logger.debug(f"No buckets found for fw:{fw}")     
+        
+        return tmp
