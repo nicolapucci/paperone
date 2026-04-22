@@ -33,7 +33,7 @@ update_frequency = 1
 base_query= 'project: Kalliope, TCoE'
 
 #YouTrack requires us to declare the name of the fields we want him to return in the API requests
-fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable)),links(issues(idReadable),linkType(name))'
+fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,text,fullName,minutes)),parent(issues(idReadable)),links(issues(idReadable),linkType(name),direction),tags(name)'
 
 #same as field but for ActivityItems
 activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value(name,text,fullName,minutes)),removed(id,idReadable,name,value(name,text,fullName,minutes)),target(id,idReadable),targetMember'
@@ -122,7 +122,7 @@ async def get_activity_items(fields,query,categories):#async fetch ActivityItems
                     params={
                         "categories":categories,
                         "fields":fields,
-                        "issueQuery":query,
+                        "issueQuery":"project: Kalliope summary: \"(Integration Test Verification)\"",#query,
                         "$top":top,
                         "$skip":skip,
                     },

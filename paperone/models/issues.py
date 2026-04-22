@@ -48,6 +48,8 @@ class Issue(Base):
 
     parent_id: Mapped[str] = mapped_column(nullable=True)
 
+    tags: Mapped[list[str]]
+
     #author: Mapped["User"] = relationship(back_populates="issues")
 
     created: Mapped[datetime.datetime]
