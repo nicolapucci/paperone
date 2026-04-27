@@ -4,6 +4,7 @@ from sqlalchemy import(
     TIMESTAMP,                             
     BIGINT,                                
     String,
+    ARRAY
 )
 
 import datetime
@@ -15,5 +16,6 @@ class Base(DeclarativeBase):
     type_annotation_map = {
         datetime.datetime: TIMESTAMP(timezone=True),
         int: BIGINT,
-        str: String
+        str: String,
+        list: ARRAY
     }

@@ -38,6 +38,7 @@ fields = 'id,idReadable,summary,created,updated,customFields(name,value(name,tex
 #same as field but for ActivityItems
 activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,name,value(name,text,fullName,minutes)),removed(id,idReadable,name,value(name,text,fullName,minutes)),target(id,idReadable),targetMember'
 
+
 #We need to specify the category of ActivityItems we want YouTrack to return(CustomFieldCategory will return Issue custom Fields)
 activity_item_category = 'CustomFieldCategory'
 
@@ -103,16 +104,16 @@ async def process_issues(executor,query):
 def upsert_activity_items_thread(chunk):
     IssueRepository.upsert_activity_items(activity_item_data=chunk)
 
-async def get_activity_items(fields,query,categories):#async fetch ActivityItems from YouTrack
+async def get_activity_items_old(fields,query,categories):#async fetch ActivityItems from YouTrack
 
     top = 3000
     skip = 0
 
     refetch = True
 
-    while refetch:
-        try:
-            async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession() as session:
+        while refetch:
+            try:
                 async with session.get(
                     headers={
                         "Content-Type":"application/json",
@@ -138,21 +139,78 @@ async def get_activity_items(fields,query,categories):#async fetch ActivityItems
                     skip += top
 
                 yield activity_item_data
-        except Exception as e:
-            logger.warning(f"Error fetching data: {e}")
-            refetch = False
+            except Exception as e:
+                logger.warning(f"Error fetching data: {e}")
+                refetch = False
+
+async def get_activity_items(fields,query,categories):#async fetch ActivityItems from YouTrack
+
+    activity_item_field = f"afterCursor,beforeCursor,hasAfter,hasBefore,activities({fields})"
+    
+    cursor = ''
+    reverse = False
+
+    refetch = True
+
+    async with aiohttp.ClientSession() as session:
+        while refetch:
+            try:
+                params={
+                        "categories":categories,
+                        "fields":activity_item_field,
+                        "issueQuery":"project: Kalliope summary: \"(Integration Test Verification)\"",#query,
+                        "$top":500
+                    }
+                if cursor != '':
+                    params['cursor'] = cursor
+                async with session.get(
+                    headers={
+                        "Content-Type":"application/json",
+                        "Accept":"application/json",
+                        "Authorization":f"Bearer {YOUTRACK_TOKEN}"
+                    },
+                    params = params,
+                    url= f"{YOUTRACK_URL}/api/activitiesPage"
+                ) as response:
+
+                    response.raise_for_status()
+
+                    response_data = await response.json()
+                    activity_item_data = response_data.get('activities',[])
+                    if not activity_item_data:
+                        raise Exception(f"no ActivityItems received: {response_data}")
+                    refetch = response_data.get('hasAfter',False)
+
+                    cursor = response_data.get('afterCursor','')
+                    if cursor == '':
+                        logger.debug(f"didn't read cursor correctly: {response_data}")
+
+                yield activity_item_data
+            except Exception as e:
+                logger.debug(f"Error fetching data: {e}")
+                logger.debug(response_data)
+
 
 async def process_activity_items(executor, query):#Uses ThreadPoolExecutor to concurrently upsert batches of ActivityItems received from get_activity_items()
     tasks = []
     loop = asyncio.get_event_loop()
+    BATCH_LIMIT = 10
 
     #get_activity_items yields abt 3k items, we gather them in batches of 6k to reduce the number of iterations needed,
     #we don't want to create big batches to avoid overloading a worker
     async for chunk in get_activity_items(fields=activity_item_field, categories=activity_item_category, query=query):
         #every chunk we create a task to upsert the data in the batch
-        tasks.append(loop.run_in_executor(executor, upsert_activity_items_thread, chunk.copy()))
+        if not chunk:
+            logger.debug(f"recevied an empty chunk: {chunk}")
+        else:
+            tasks.append(loop.run_in_executor(executor, upsert_activity_items_thread, chunk.copy()))
         
-    #we launch the tasks
+        #launch a batch of 10 tasks
+        if len(tasks) >= BATCH_LIMIT:
+            await asyncio.gather(*tasks)
+            tasks.clear()
+
+    #launch the remaining tasks
     await asyncio.gather(*tasks)
 
     return

@@ -5,8 +5,11 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy import (
     UniqueConstraint,
-    ForeignKey
+    ForeignKey,
+    String,
+    ARRAY
 )
+
 
 from sqlalchemy.dialects.postgresql import UUID
 import datetime
@@ -48,7 +51,7 @@ class Issue(Base):
 
     parent_id: Mapped[str] = mapped_column(nullable=True)
 
-    tags: Mapped[list[str]]
+    tags: Mapped[list[str]] = mapped_column(ARRAY(String))
 
     #author: Mapped["User"] = relationship(back_populates="issues")
 
