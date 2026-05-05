@@ -15,9 +15,7 @@ Base.metadata.create_all(engine)
 
 @app.on_event("startup")
 async def startup_event():
-    logger.debug('launching startup')
     subprocess.Popen(["python", "-m", "youtrack.youTrack"])
-#    TestRepository.upsert_tests(TestRepository.prepare_csv_for_import('./bugia_csv'))
 
 @app.get('/okr1')
 def OKR1():
@@ -28,12 +26,12 @@ def OKR2():
     return IssueRepository.okr2()
 
 @app.get('/okr3')
-def fte():
+def OKR3():
     return okr3()
 
 @app.get('/okr4')
 def OKR4():
-    return IssueRepository.okr4_test()
+    return IssueRepository.okr4()
 
 
 

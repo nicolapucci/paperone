@@ -2,7 +2,8 @@ import redis
 import os
 import datetime
 import json
-      
+import pandas as pd
+
 REDIS_HOST = os.getenv('REDIS_HOST')
 REDIS_PORT = os.getenv('REDIS_PORT',6379)
 
@@ -10,12 +11,29 @@ REDIS_PORT = os.getenv('REDIS_PORT',6379)
 redis_client = redis.Redis(host=REDIS_HOST,port=REDIS_PORT,decode_responses=True)
 
 
-def get_youtrack_last_sync():
-    return redis_client.get('youtrack_sync_timestamp')
+def get_last_issue_pull():
+    timestamp = redis_client.get("last_issue_pull")
+    if timestamp is not None:
+        return datetime.fromtimestamp(timestamp)
+    else:
+        return None
+    
+def set_last_issue_pull():
+    now = datetime.datetime.now().timestamp()
+    redis_client.set('last_issue_pull',now)
 
-def set_youtrack_last_sync():
-    now = datetime.datetime.now().strftime('%Y-%m')
-    redis_client.set('youtrack_sync_timestamp',now)
+
+def get_last_avtivities_pull():
+    timestamp = redis_client.get("last_activities_pull")
+    if timestamp is not None:
+        return datetime.fromtimestamp(timestamp)
+    else:
+        return None
+
+def set_last_activities_pull():
+    now = datetime.datetime.now().timestamp()
+    redis_client.set('last_activities_pull',now)
+
 
 
 def get_custom_field_id_mapper():
@@ -58,7 +76,9 @@ def set_okr2_data(data:list):
     for item in data:
         new_obj = {}
         for k,v in item.items():
-            if isinstance(v,datetime.datetime):
+            if pd.isna(v):
+                new_obj[k] = None
+            elif isinstance(v,datetime.datetime):
                 new_obj[k] = {"value":v.timestamp(),"type":"datetime"}
             elif isinstance(v,datetime.timedelta):
                 new_obj[k] = {"value":v.total_seconds(),"type":"timedelta"}

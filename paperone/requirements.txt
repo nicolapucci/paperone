@@ -12,3 +12,5 @@ requests
 pytz
 
 bs4
+
+pandas

@@ -6,6 +6,8 @@ services:
     command: redis-server --save 60 1 --loglevel warning
     volumes:
       - redis_data:/data
+    networks:
+      - paperone
 
   postgresql:
     image: postgres:16-alpine
@@ -15,6 +17,8 @@ services:
         POSTGRES_USER: ${DB_USER}
         POSTGRES_PASSWORD: ${DB_PASSWORD}
         POSTGRES_DB: ${DB_NAME}
+    networks:
+      - paperone
 
     volumes:
         - postgres_data:/var/lib/postgresql/data
@@ -36,6 +40,10 @@ services:
       - '3000:3000'
     volumes:
       - 'grafana_storage:/var/lib/grafana'
+    networks:
+      - grafana
+
+
 
   paperone:
     
@@ -46,6 +54,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      dev: True
 
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgresql:5432/${DB_NAME}
       DB_HOST: postgresql
@@ -53,6 +62,11 @@ services:
 
       YOUTRACK_TOKEN: ${YOUTRACK_TOKEN}
       YOUTRACK_URL: ${YOUTRACK_URL}
+
+    networks:
+      - paperone
+      - grafana
+
 
 # RIMUOVERE QUANDO SI ESCE DA DEV STAGE
     volumes: 
@@ -65,3 +79,7 @@ volumes:
   postgres_data:
   redis_data:
   grafana_storage: {}
+
+networks:
+  paperone:
+  grafana:

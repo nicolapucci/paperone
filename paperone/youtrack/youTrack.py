@@ -1,17 +1,16 @@
 from services.redis_client import (
-    set_youtrack_last_sync,
-    get_youtrack_last_sync
+    set_last_issue_pull,
+    get_last_issue_pull,
+    set_last_activities_pull,
+    get_last_avtivities_pull
 )
 from services.issue_repository import IssueRepository
 from services.logger import logger
 
 from concurrent.futures import ThreadPoolExecutor
 
-from datetime import datetime,timezone
-
 import aiohttp
 import asyncio
-import json
 import os
 
 
@@ -46,7 +45,6 @@ def update_query(last_update):
     return f"{base_query} updated: {last_update} .. Now"
 
 
-
 def upsert_issues_thread(chunk):
     IssueRepository.upsert_issues(issue_data=chunk)
 
@@ -56,6 +54,9 @@ async def get_issues(fields,query):#sync fetch issues from YouTrack
     skip = 0
 
     refetch = True
+
+
+    failed_calls_count = 0
 
     while refetch:
         try:
@@ -83,11 +84,14 @@ async def get_issues(fields,query):#sync fetch issues from YouTrack
                     
                     skip += top
 
+                failed_calls_count = 0
                 yield issue_data
 
         except Exception as e:
+            refetch = failed_calls_count < 3
+            failed_calls_count +=1
             logger.warning(f"Error fetching data: {e}")
-            refetch = False
+
 
 async def process_issues(executor,query):
     tasks = []
@@ -104,143 +108,90 @@ async def process_issues(executor,query):
 def upsert_activity_items_thread(chunk):
     IssueRepository.upsert_activity_items(activity_item_data=chunk)
 
-async def get_activity_items_old(fields,query,categories):#async fetch ActivityItems from YouTrack
+async def get_issue_activities(issue_id, fields,session):
+    try:
+        async with session.get(
+            headers={
+                "Content-Type":"application/json",
+                "Accept":"application/json",
+                "Authorization":f"Bearer {YOUTRACK_TOKEN}"
+            },
+            params = {
+                "categories":activity_item_category,
+                "fields":fields
+            },
+            url = f"{YOUTRACK_URL}/api/issues/{issue_id}/activities"
+        ) as response:
+            response.raise_for_status()
+            issue_data = await response.json()
+            return issue_data
+    except Exception as e:
+        logger.warning(f"<ajbsdògJB")
+        raise
+       
 
-    top = 3000
-    skip = 0
+async def process_issue_activities( executor,last_activities_pull, batch_size=3000):
+    issue_ids = IssueRepository.get_validation_ids(last_activities_pull)
+    semaphore = asyncio.Semaphore(4)
+    loop = asyncio.get_running_loop()
 
-    refetch = True
+    buffer = []
 
-    async with aiohttp.ClientSession() as session:
-        while refetch:
-            try:
-                async with session.get(
-                    headers={
-                        "Content-Type":"application/json",
-                        "Accept":"application/json",
-                        "Authorization":f"Bearer {YOUTRACK_TOKEN}"
-                    },
-                    params={
-                        "categories":categories,
-                        "fields":fields,
-                        "issueQuery":"project: Kalliope summary: \"(Integration Test Verification)\"",#query,
-                        "$top":top,
-                        "$skip":skip,
-                    },
-                    url= f"{YOUTRACK_URL}/api/activities"
-                ) as response:
-
-                    response.raise_for_status()
-
-                    activity_item_data = await response.json()
-
-                    refetch = False if len(activity_item_data)<top else True #if youtrack returns less items than requested it means he don-t have any more items to return
-                    
-                    skip += top
-
-                yield activity_item_data
-            except Exception as e:
-                logger.warning(f"Error fetching data: {e}")
-                refetch = False
-
-async def get_activity_items(fields,query,categories):#async fetch ActivityItems from YouTrack
-
-    activity_item_field = f"afterCursor,beforeCursor,hasAfter,hasBefore,activities({fields})"
-    
-    cursor = ''
-    reverse = False
-
-    refetch = True
+    async def fetch(session, issue_id):
+        async with semaphore:
+            return await get_issue_activities(issue_id, activity_item_field, session)
 
     async with aiohttp.ClientSession() as session:
-        while refetch:
-            try:
-                params={
-                        "categories":categories,
-                        "fields":activity_item_field,
-                        "issueQuery":"project: Kalliope summary: \"(Integration Test Verification)\"",#query,
-                        "$top":500
-                    }
-                if cursor != '':
-                    params['cursor'] = cursor
-                async with session.get(
-                    headers={
-                        "Content-Type":"application/json",
-                        "Accept":"application/json",
-                        "Authorization":f"Bearer {YOUTRACK_TOKEN}"
-                    },
-                    params = params,
-                    url= f"{YOUTRACK_URL}/api/activitiesPage"
-                ) as response:
 
-                    response.raise_for_status()
+        tasks = [asyncio.create_task(fetch(session, i)) for i in issue_ids]
 
-                    response_data = await response.json()
-                    activity_item_data = response_data.get('activities',[])
-                    if not activity_item_data:
-                        raise Exception(f"no ActivityItems received: {response_data}")
-                    refetch = response_data.get('hasAfter',False)
+        for task in asyncio.as_completed(tasks):
+            result = await task
+            buffer.extend(result)
 
-                    cursor = response_data.get('afterCursor','')
-                    if cursor == '':
-                        logger.debug(f"didn't read cursor correctly: {response_data}")
+            # appena ho abbastanza dati → inserisco
+            if len(buffer) >= batch_size:
+                await loop.run_in_executor(
+                    executor,
+                    upsert_activity_items_thread,
+                    buffer.copy()
+                )
+                buffer.clear()
 
-                yield activity_item_data
-            except Exception as e:
-                logger.debug(f"Error fetching data: {e}")
-                logger.debug(response_data)
-
-
-async def process_activity_items(executor, query):#Uses ThreadPoolExecutor to concurrently upsert batches of ActivityItems received from get_activity_items()
-    tasks = []
-    loop = asyncio.get_event_loop()
-    BATCH_LIMIT = 10
-
-    #get_activity_items yields abt 3k items, we gather them in batches of 6k to reduce the number of iterations needed,
-    #we don't want to create big batches to avoid overloading a worker
-    async for chunk in get_activity_items(fields=activity_item_field, categories=activity_item_category, query=query):
-        #every chunk we create a task to upsert the data in the batch
-        if not chunk:
-            logger.debug(f"recevied an empty chunk: {chunk}")
-        else:
-            tasks.append(loop.run_in_executor(executor, upsert_activity_items_thread, chunk.copy()))
-        
-        #launch a batch of 10 tasks
-        if len(tasks) >= BATCH_LIMIT:
-            await asyncio.gather(*tasks)
-            tasks.clear()
-
-    #launch the remaining tasks
-    await asyncio.gather(*tasks)
-
-    return
+        # flush finale
+        if buffer:
+            await loop.run_in_executor(
+                executor,
+                upsert_activity_items_thread,
+                buffer.copy()
+            )
 
 async def youTrack_worker():
-    logger.debug('worker start')
     while True:
-        logger.info("Starting Issue sync...")
+        logger.info("Starting pulling...")
 
-        last_sync = get_youtrack_last_sync()#timestamp from the last cicle saved in redis
+        last_issue_pull = get_last_issue_pull()
 
-        last_sync = IssueRepository.get_max_updated_issue() if not last_sync else last_sync#if there is nothing on redis then check the most recend issue.updated from the saved issues
-            
-        query=update_query(last_sync) if last_sync else base_query#if there is a previous update only ask for data from 1h before that
+        last_activities_pull = get_last_avtivities_pull()
+        
+        query=update_query(last_issue_pull.strftime('%Y-%m')) if last_issue_pull else base_query#if there is a previous update only ask for data from 1h before that
 
-        try:            
-
+        try:    
             with ThreadPoolExecutor(max_workers=5) as executor:
                 await process_issues(executor,query)
-
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                await process_activity_items(executor,query)
-
-            logger.info("YouTrack Sync successfully completed")
-
-            set_youtrack_last_sync()#set last sync at now
-        
+            set_last_issue_pull()
+            logger.info("Done with issue pulling")
         except Exception as e:
-            logger.info(f"Error during YouTrack syncronization: {e}")
-            raise
+            logger.error(f"Error doing issue pull {e}")
+
+        try:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                await process_issue_activities(executor,last_activities_pull)
+            set_last_activities_pull()
+            logger.info("Done with activities pulling")
+        except Exception as e:
+            logger.error(f"Error during ativities pull {e}")
+
         await asyncio.sleep(
                     60*60*(update_frequency)
                 )
