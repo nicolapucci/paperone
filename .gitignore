@@ -1,5 +1,4 @@
 **/**.env
-**/.venv/**
 **/__pycache__/**
 
 **/sf_**/**
@@ -10,17 +9,4 @@
 
 **/logs/**
 
-**/prova.txt
-
-**/**.xlsx
-**/**.csv
-**/**.txt
-
-**/prova_adriano.py
-
-**/issue.json
-
-**/grafana.json
-**/tests_over_fte.json
-**/media_mobile.json
 **/**.save

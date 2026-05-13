@@ -21,6 +21,7 @@ services:
       - paperone
 
     volumes:
+        - ./db_init:/docker-entrypoint-initdb.d/
         - postgres_data:/var/lib/postgresql/data
     healthcheck:
         test: ["CMD-SHELL","pg_isready -U ${DB_USER} -d ${DB_NAME}"]
@@ -29,21 +30,21 @@ services:
         retries: 10
         start_period: 10s
     
-
   grafana:
     image: grafana/grafana-enterprise
     container_name: grafana
     restart: unless-stopped
     environment:
       - GL_LOG_LEVEL=warning
+      - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
     ports:
       - '3000:3000'
     volumes:
-      - 'grafana_storage:/var/lib/grafana'
+      - ./provisioning:/etc/grafana/provisioning
+      - ./dashboards:/etc/grafana/dashboards
+      - grafana_storage:/var/lib/grafana
     networks:
       - grafana
-
-
 
   paperone:
     
@@ -54,7 +55,6 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      dev: True
 
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgresql:5432/${DB_NAME}
       DB_HOST: postgresql
@@ -67,10 +67,6 @@ services:
       - paperone
       - grafana
 
-
-# RIMUOVERE QUANDO SI ESCE DA DEV STAGE
-    volumes: 
-      - ./paperone:/app
     depends_on:
       postgresql:
         condition: service_healthy
@@ -78,7 +74,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  grafana_storage: {}
+  grafana_storage:
 
 networks:
   paperone:

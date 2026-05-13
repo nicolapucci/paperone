@@ -14,7 +14,10 @@ redis_client = redis.Redis(host=REDIS_HOST,port=REDIS_PORT,decode_responses=True
 def get_last_issue_pull():
     timestamp = redis_client.get("last_issue_pull")
     if timestamp is not None:
-        return datetime.fromtimestamp(timestamp)
+        try:
+            return datetime.datetime.fromtimestamp(float(timestamp))
+        except Exception as e:
+            return None
     else:
         return None
     
@@ -26,7 +29,7 @@ def set_last_issue_pull():
 def get_last_avtivities_pull():
     timestamp = redis_client.get("last_activities_pull")
     if timestamp is not None:
-        return datetime.fromtimestamp(timestamp)
+        return datetime.datetime.fromtimestamp(float(timestamp))
     else:
         return None
 
@@ -88,6 +91,8 @@ def set_okr2_data(data:list):
     redis_client.set('okr2',json.dumps(new_list))
     redis_client.expire('okr2', 60 * 10)
 
+def clear_okr2_data():
+    redis_client.delete('okr2')
 
 
 

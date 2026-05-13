@@ -1,19 +1,9 @@
 from sqlalchemy import (
     select,
-    exists,
-    and_ ,
     or_,
     func,
-    case,
-    desc,
-    Integer,
-    literal_column,
-    text
 )
 from sqlalchemy.orm import Session, aliased
-
-from sqlalchemy.sql import over
-from sqlalchemy.sql import func as sqlfunc
 
 from sqlalchemy.dialects.postgresql import insert
 
@@ -41,8 +31,9 @@ from models.value import (
     NumberValue,
     StringValue,
     FieldValue,
-    Value
 )
+
+import holidays
 
 import pandas as pd
 
@@ -57,14 +48,12 @@ from services.redis_client import(
 import uuid
 from collections import defaultdict
 import bisect
-import os
 
 """
     issue_repository gestisce iserimento/lettura/elaborazione dei dati delle Issue principalmente:
         -inserimento e aggiornamento dati
         -analisi e metriche OKR
 """
-dev = os.getenv('dev')
 
 utc = pytz.UTC
 
@@ -74,9 +63,11 @@ ITERVALLO_MEDIA_MOBILE = timedelta(days= (6*30))#6 mesi
 
 avg_val_duration = timedelta(hours=5)
 
-validation_time_share = 0.6 # % of the hours planned to be dedicated to validations, (0.0 - 1)
+validation_time_share = 1 # % of the hours planned to be dedicated to validations, (0.0 - 1)
 
 weekly_working_hours = (40*3 + 32*2)
+
+pisa_holidays = holidays.IT(subdiv='PI')
 
 
 # TODO escludere giorni festivi, se possibile usare i giorni lavorativi effettivi
@@ -89,7 +80,7 @@ def working_hours_only_timedelta(end_date:datetime,start_date:datetime):
     working_time = timedelta(0)
 
     while current_date < end_date:
-        if current_date.weekday() < 5:
+        if current_date.weekday() < 5 and not current_date in pisa_holidays:
 
             working_day_start = datetime(current_date.year,current_date.month,current_date.day,8,0,0).replace(tzinfo=utc)
             working_day_break_start = datetime(current_date.year,current_date.month,current_date.day,12,0,0).replace(tzinfo=utc)
@@ -481,9 +472,6 @@ class IssueRepository:
                 raise
    
 
-
-
-
     @staticmethod
     def okr1():
 
@@ -629,7 +617,7 @@ class IssueRepository:
         tv = aliased(TimeValue)
 
         data = get_okr2_data()
-        if data and dev is not True:
+        if data:
             return data
         rc0_releases = ProductRepository.rc0_releases()
 
@@ -731,10 +719,8 @@ class IssueRepository:
         df["start"] = pd.to_datetime(df["start"])
         df = df.sort_values("start")
 
-        window_mesi = 3
-        medie = []
-
-        for _, row in df.iterrows():
+        window_mesi = 6
+        for index, row in df.iterrows():
             fine = row["start"]
             inizio = fine - pd.DateOffset(months=window_mesi)
             
@@ -744,9 +730,8 @@ class IssueRepository:
             ]
             
             media = subset["test_phase_duration"].mean()
-            medie.append(media)
 
-        df[f"media_a_{window_mesi}_mesi"] = medie
+            df.loc[index,f"media_a_{window_mesi}_mesi"] = media
 
         okr2_data = df.to_dict(orient="records")
 
@@ -759,7 +744,7 @@ class IssueRepository:
     def okr4():
 
         data = get_okr4_data()
-        if data and dev is not True:
+        if data:
             return data
 
         i = aliased(Issue)
@@ -1023,9 +1008,17 @@ class IssueRepository:
                         "count":len(val),
                         #"ignored_because_first_ass_is_missing":len(ignored_vals)
                     }
-                    buckets['slip'] = max([(buckets.get('slip',0) - presumed_overassignements) - slipped_due_to_block_stage, 0])
+
+                    #Overassignements cannot be grater than slipped Validations
+                    slip_excluding_blocked = max([buckets.get('slip') - slipped_due_to_block_stage , 0])
+                    presumed_overassignements = min([slip_excluding_blocked,presumed_overassignements])
                     buckets['overassigned'] = presumed_overassignements
+
+                    #Slip are the slipped validations not caused by Overassigned or Blocked status
+                    buckets['slip'] = max([slip_excluding_blocked - presumed_overassignements, 0])
+                    
                     buckets['blocked'] = slipped_due_to_block_stage
+                    
                     for bucket,count in buckets.items():
                         bucket_share = count/len(val)
                         tmp[fw][bucket] = bucket_share
