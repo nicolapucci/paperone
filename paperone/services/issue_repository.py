@@ -697,19 +697,19 @@ class IssueRepository:
 
             phase_info = {
                 "fw":fw,
-                "start":start,
+                "start":int(start.timestamp()),
                 #"end":end,
-                "test_phase_duration":test_phase_duration,
+                "test_phase_duration":int(test_phase_duration.total_seconds()),
                 #"test_phase_team_working_hours_duration": test_phase_team_working_hours_duration
             }
             if start is not None:
                 tmp.append((fw,test_phase_duration,start))
 
             if test_phase_team_working_hours_duration > timedelta(0):
-                phase_info["validations_time_share"] = validations / test_phase_team_working_hours_duration
-                phase_info["manual_time_share"] = manual / test_phase_team_working_hours_duration
-                phase_info["automated_time_share"] = automated / test_phase_team_working_hours_duration
-                phase_info["other"] = 1- ((validations + manual + automated) / test_phase_team_working_hours_duration)
+                phase_info["validations_time_share"] = (validations / test_phase_team_working_hours_duration)*100
+                phase_info["manual_time_share"] = (manual / test_phase_team_working_hours_duration)*100
+                phase_info["automated_time_share"] = (automated / test_phase_team_working_hours_duration)*100
+                phase_info["other"] = (1- ((validations + manual + automated) / test_phase_team_working_hours_duration))*100
             okr2_data.append(phase_info)
 
         df = pd.DataFrame(okr2_data)

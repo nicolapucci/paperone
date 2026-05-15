@@ -444,8 +444,7 @@
         {
           "columns": [],
           "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "aflticliqwqgwc"
+            "type": "yesoreyeram-infinity-datasource"
           },
           "filters": [],
           "format": "table",
@@ -495,8 +494,7 @@
           "value": "2026-05-01T00:00:00+00:00"
         },
         "datasource": {
-          "type": "yesoreyeram-infinity-datasource",
-          "uid": "aflticliqwqgwc"
+          "type": "yesoreyeram-infinity-datasource"
         },
         "definition": "",
         "includeAll": false,

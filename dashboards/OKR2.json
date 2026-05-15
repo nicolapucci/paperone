@@ -297,7 +297,7 @@
     },
     {
       "datasource": {
-        "type": "yesoreyeram-infinity-datasource"
+        "name": "paperone"
       },
       "fieldConfig": {
         "defaults": {
@@ -352,8 +352,7 @@
         {
           "columns": [],
           "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "aflticliqwqgwc"
+            "name":"paperone"
           },
           "filters": [],
           "format": "table",
@@ -401,8 +400,7 @@
           "value": "4.17.13"
         },
         "datasource": {
-          "type": "yesoreyeram-infinity-datasource",
-          "uid": "aflticliqwqgwc"
+          "type": "yesoreyeram-infinity-datasource"
         },
         "definition": "",
         "includeAll": false,
