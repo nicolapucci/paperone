@@ -70,7 +70,6 @@ weekly_working_hours = (40*3 + 32*2)
 pisa_holidays = holidays.IT(subdiv='PI')
 
 
-# TODO escludere giorni festivi, se possibile usare i giorni lavorativi effettivi
 def working_hours_only_timedelta(end_date:datetime,start_date:datetime):
     end_date = end_date.replace(tzinfo=utc)
     start_date = start_date.replace(tzinfo=utc)
@@ -390,7 +389,7 @@ class IssueRepository:
                     logger.error(f"unable to find custom field for: {issue_id_readable}-{field_name}, skipping this activityItem...")
                 else:
                     if not rm and not added:
-                        logger.warning(f"{issue_id_readable} \t {field_name} \t {timestamp} added and rm are None")
+                        logger.debug(f"{issue_id_readable} \t {field_name} \t {timestamp} added and rm are None")
                     if rm:
                         rm_uuid = uuid.uuid4()
 
@@ -932,14 +931,14 @@ class IssueRepository:
                 if id_readable not in ids:
                     if not first_assigned:
                         first_assigned = created
-                        logger.warning(f"{id_readable} has no first ass to TCoE but it's currently assigned to TCoE")
+                        logger.warning(f"{id_readable} has no first assignement to TCoE but it's currently assigned to TCoE")
                     last_set_as_done = last_set_as_done if last_set_as_done is not None else convert_to_timezone_aware(datetime.now())
                     fw_dict[fix_version].append((last_set_as_done,first_assigned))
                     ids.append(id_readable)
             else:
                 ignored_fw_dict[fix_version].append(id_readable)
                 message = "is not assigned to TCoE" if assignee not in TCoE_MEMBERS else "has no fix version"
-                logger.debug(f"{id_readable} {message}") 
+                logger.debug(f"{id_readable}: {message}") 
 
 
         tmp = defaultdict()

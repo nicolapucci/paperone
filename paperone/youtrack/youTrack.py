@@ -126,8 +126,8 @@ async def get_issue_activities(issue_id, fields,session):
             issue_data = await response.json()
             return issue_data
     except Exception as e:
-        logger.warning(f"<ajbsdògJB")
-        raise
+        logger.warning(f"Error fetching ActivityItem {issue_id}")
+        raise e
        
 
 async def process_issue_activities( executor,last_activities_pull, batch_size=3000):
@@ -168,7 +168,7 @@ async def process_issue_activities( executor,last_activities_pull, batch_size=30
 
 async def youTrack_worker():
     while True:
-        logger.info("Starting pulling...")
+        logger.info("About to pull data from YouTrack...")
 
         last_issue_pull = get_last_issue_pull()
 
@@ -180,7 +180,7 @@ async def youTrack_worker():
             with ThreadPoolExecutor(max_workers=5) as executor:
                 await process_issues(executor,query)
             set_last_issue_pull()
-            logger.info("Done with issue pulling")
+            logger.info("Issue pulling is completed.")
         except Exception as e:
             logger.error(f"Error doing issue pull {e}")
 
@@ -188,7 +188,7 @@ async def youTrack_worker():
             with ThreadPoolExecutor(max_workers=5) as executor:
                 await process_issue_activities(executor,last_activities_pull)
             set_last_activities_pull()
-            logger.info("Done with activities pulling")
+            logger.info("ActivityItem pulling is completed.")
         except Exception as e:
             logger.error(f"Error during ativities pull {e}")
 
