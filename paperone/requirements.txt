@@ -14,3 +14,5 @@ pytz
 bs4
 
 pandas
+
+holidays
