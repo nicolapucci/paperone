@@ -715,7 +715,7 @@ class IssueRepository:
 
 
 
-        df["start"] = pd.to_datetime(df["start"])
+        df["start"] = pd.to_datetime(df["start"],unit='s')
         df = df.sort_values("start")
 
         window_mesi = 6
