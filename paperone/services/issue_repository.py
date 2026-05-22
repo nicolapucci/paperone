@@ -736,6 +736,8 @@ class IssueRepository:
 
         set_okr2_data(okr2_data)
 
+        okr2_data = get_okr2_data()
+
         return okr2_data
 
 

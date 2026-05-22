@@ -130,6 +130,36 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "test_phase_duration"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "media_a_6_mesi"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -214,7 +244,7 @@
             }
           },
           "mappings": [],
-          "unit": "percentunit"
+          "unit": "percent"
         },
         "overrides": []
       },
@@ -265,10 +295,11 @@
           "options": {
             "include": {
               "names": [
-                "fw",
                 "automated_time_share",
+                "fw",
                 "manual_time_share",
-                "validations_time_share"
+                "validations_time_share",
+                "other"
               ]
             }
           }
@@ -352,7 +383,7 @@
         {
           "columns": [],
           "datasource": {
-            "name":"paperone"
+            "name": "paperone"
           },
           "filters": [],
           "format": "table",

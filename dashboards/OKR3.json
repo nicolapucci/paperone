@@ -82,12 +82,34 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "automated_count"
+              "options": "automated percentage"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "percentunit"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tests over fte"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
               }
             ]
           }
@@ -164,8 +186,8 @@
     "list": []
   },
   "time": {
-    "from": "2025-12-09T23:00:00.000Z",
-    "to": "2025-12-09T23:00:00.000Z"
+    "from": "2023-12-09T23:00:00.000Z",
+    "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
