@@ -67,14 +67,7 @@
               "mode": "off"
             }
           },
-          "links": [
-            {
-              "oneClick": false,
-              "targetBlank": false,
-              "title": "set date",
-              "url": "/d/okr1/okr1?var-defect_rate_date=${__data.fields.date:percentencode}"
-            }
-          ],
+          "links": [],
           "mappings": [],
           "noValue": "0",
           "thresholds": {
@@ -106,7 +99,7 @@
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "dark-red",
+                  "fixedColor": "dark-green",
                   "mode": "fixed"
                 }
               }
@@ -143,18 +136,18 @@
               },
               {
                 "id": "custom.barWidthFactor",
-                "value": 0.1
+                "value": 0
               },
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "dark-blue",
+                  "fixedColor": "super-light-yellow",
                   "mode": "fixed"
                 }
               },
               {
                 "id": "custom.fillOpacity",
-                "value": 36
+                "value": 0
               },
               {
                 "id": "noValue",
@@ -538,6 +531,6 @@
   "timezone": "browser",
   "title": "OKR1",
   "uid": "okr1",
-  "version": 3,
+  "version": 1,
   "weekStart": ""
 }

@@ -151,7 +151,7 @@
           "withTransforms": true
         }
       ],
-      "title": "New panel",
+      "title": "",
       "transformations": [
         {
           "id": "filterFieldsByName",
@@ -190,7 +190,7 @@
           },
           "mappings": [],
           "noValue": "0",
-          "unit": "s"
+          "unit": "percentunit"
         },
         "overrides": [
           {
@@ -259,7 +259,7 @@
           "withTransforms": true
         }
       ],
-      "title": "Validations Slipped not to TCoE",
+      "title": "Validation Life Breakdown",
       "transformations": [
         {
           "id": "filterFieldsByName",
@@ -316,7 +316,7 @@
           },
           "mappings": [],
           "noValue": "0",
-          "unit": "s"
+          "unit": "percentunit"
         },
         "overrides": [
           {
@@ -385,7 +385,7 @@
           "withTransforms": true
         }
       ],
-      "title": "Validations Pre FW",
+      "title": "Validations Bucket Breakdown",
       "transformations": [
         {
           "id": "filterFieldsByName",
@@ -597,6 +597,6 @@
   "timezone": "browser",
   "title": "OKR4",
   "uid": "okr4",
-  "version": 2,
+  "version": 1,
   "weekStart": ""
 }
