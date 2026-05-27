@@ -50,7 +50,8 @@ async def generate_dashboard_pngs():
         if file.endswith(".json"):
             with open(os.path.join(dasboard_templates_dir, file), 'r') as f:
                 dashboard_templates.append(json.load(f))
-    grafana_token = os.getenv('GRAFANA_TOKEN')
+    with open("/app/shared/grafana-token.txt", "r") as f:
+        grafana_token = f.read().strip()
     base_url = "http://grafana:3000/render/d-solo"
     now = datetime.now().strftime('%Y-%m-%d_%H-%M')
     async with aiohttp.ClientSession() as session:
@@ -72,6 +73,8 @@ async def generate_dashboard_pngs():
                 panel_id = panel['id']
                 panel_grid = panel['gridPos']
                 panel_title = panel['title']
+                panel_title = panel_title.replace(" ", "_").replace("/","_") #avoid issues with file names
+                panel_title = panel_title if panel_title else f"panel_{panel_id}" #if the panel doesn't have a title use its id as title
 
                 logger.debug(f"Fetching PNG for panel {panel_id} of dashboard {name} with size {panel_grid['w']}x{panel_grid['h']}")
 
@@ -89,6 +92,9 @@ async def generate_dashboard_pngs():
                 ) as response:
                     response.raise_for_status()
                     png_data = await response.read()
+
+                    os.makedirs(f"snapshots/{name}", exist_ok=True)
+                    
                     with open(f"snapshots/{name}/{panel_title}_{now}.png", 'wb') as f:
                         f.write(png_data)
 
@@ -243,6 +249,8 @@ async def youTrack_worker():
             logger.info("ActivityItem pulling is completed.")
         except Exception as e:
             logger.error(f"Error during ativities pull {e}")
+
+        await generate_dashboard_pngs()
 
         await asyncio.sleep(
                     60*60*(update_frequency)

@@ -69,6 +69,16 @@ services:
       - ./provisioning:/etc/grafana/provisioning
       - ./dashboards:/etc/grafana/dashboards
       - grafana_storage:/var/lib/grafana
+      - /shared:/shared
+    command:
+      - /bin/sh
+      - -c
+      - |
+        /run.sh &
+        sleep 15
+        /create-token.sh
+        wait
+
     networks:
       - grafana
 
@@ -97,6 +107,8 @@ services:
     volumes:
       - ./dashboards:/app/dashboards
       - ./snapshots:/app/snapshots
+      - ./logs:/app/logs
+      - ./shared:/app/shared
     depends_on:
       postgresql:
         condition: service_healthy
