@@ -1,3 +1,4 @@
+
 **/**.env
 **/__pycache__/**
 
@@ -12,3 +13,4 @@
 
 **/**.save
 **/snapshots/**
+**/shared/**

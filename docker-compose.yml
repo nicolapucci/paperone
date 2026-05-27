@@ -69,7 +69,8 @@ services:
       - ./provisioning:/etc/grafana/provisioning
       - ./dashboards:/etc/grafana/dashboards
       - grafana_storage:/var/lib/grafana
-      - /shared:/shared
+      - ./create-token.sh:/create-token.sh
+      - ./shared:/shared
     command:
       - /bin/sh
       - -c

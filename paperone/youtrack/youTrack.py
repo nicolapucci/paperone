@@ -50,54 +50,56 @@ async def generate_dashboard_pngs():
         if file.endswith(".json"):
             with open(os.path.join(dasboard_templates_dir, file), 'r') as f:
                 dashboard_templates.append(json.load(f))
-    with open("/app/shared/grafana-token.txt", "r") as f:
-        grafana_token = f.read().strip()
-    base_url = "http://grafana:3000/render/d-solo"
-    now = datetime.now().strftime('%Y-%m-%d_%H-%M')
-    async with aiohttp.ClientSession() as session:
-        for template in dashboard_templates:
-            uid = template['uid']
-            try:
-                endpoint = template['templating']['list'][0]['query']['infinityQuery']['url']
-            except Exception as e:
-                logger.warning(f"Error fetching endpoint for dashboard {template['title']}: {e}")
-                continue
-            name = template['title']
+    if 'grafana-token.txt' in os.listdir("/app/shared/"):
+        with open("/app/shared/grafana-token.txt", "r") as f:
+            grafana_token = f.read().strip()
+        base_url = "http://grafana:3000/render/d-solo"
+        now = datetime.now().strftime('%Y-%m-%d_%H-%M')
+        async with aiohttp.ClientSession() as session:
+            for template in dashboard_templates:
+                uid = template['uid']
+                try:
+                    endpoint = template['templating']['list'][0]['query']['infinityQuery']['url']
+                except Exception as e:
+                    logger.warning(f"Error fetching endpoint for dashboard {template['title']}: {e}")
+                    continue
+                name = template['title']
 
-            url = f"{base_url}/{uid}{endpoint}"
+                url = f"{base_url}/{uid}{endpoint}"
 
-            panels = template['panels']
+                panels = template['panels']
 
-            logger.debug(f"About to fetch PNGs for dashboard @ {url}")
-            for panel in panels:
-                panel_id = panel['id']
-                panel_grid = panel['gridPos']
-                panel_title = panel['title']
-                panel_title = panel_title.replace(" ", "_").replace("/","_") #avoid issues with file names
-                panel_title = panel_title if panel_title else f"panel_{panel_id}" #if the panel doesn't have a title use its id as title
+                logger.debug(f"About to fetch PNGs for dashboard @ {url}")
+                for panel in panels:
+                    panel_id = panel['id']
+                    panel_grid = panel['gridPos']
+                    panel_title = panel['title']
+                    panel_title = panel_title.replace(" ", "_").replace("/","_") #avoid issues with file names
+                    panel_title = panel_title if panel_title else f"panel_{panel_id}" #if the panel doesn't have a title use its id as title
 
-                logger.debug(f"Fetching PNG for panel {panel_id} of dashboard {name} with size {panel_grid['w']}x{panel_grid['h']}")
+                    logger.debug(f"Fetching PNG for panel {panel_id} of dashboard {name} with size {panel_grid['w']}x{panel_grid['h']}")
 
-                async with session.get(
-                    headers={
-                        "Authorization":f"Bearer {grafana_token}"
-                    },
-                    params={
-                        "width": panel_grid['w']*100,
-                        "height": panel_grid['h']*100,
-                        "tz": "UTC",
-                        "panelId": panel_id
-                    },
-                    url=url
-                ) as response:
-                    response.raise_for_status()
-                    png_data = await response.read()
+                    async with session.get(
+                        headers={
+                            "Authorization":f"Bearer {grafana_token}"
+                        },
+                        params={
+                            "width": panel_grid['w']*100,
+                            "height": panel_grid['h']*100,
+                            "tz": "UTC",
+                            "panelId": panel_id
+                        },
+                        url=url
+                    ) as response:
+                        response.raise_for_status()
+                        png_data = await response.read()
 
-                    os.makedirs(f"snapshots/{name}", exist_ok=True)
-                    
-                    with open(f"snapshots/{name}/{panel_title}_{now}.png", 'wb') as f:
-                        f.write(png_data)
-
+                        os.makedirs(f"snapshots/{name}", exist_ok=True)
+                        
+                        with open(f"snapshots/{name}/{panel_title}_{now}.png", 'wb') as f:
+                            f.write(png_data)
+    else:
+        logger.warning("Grafana token not found, skipping PNG generation")
 
 def update_query(last_update):
     return f"{base_query} updated: {last_update} .. Now"
