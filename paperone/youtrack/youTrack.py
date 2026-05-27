@@ -10,7 +10,9 @@ from services.logger import logger
 from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp
+import json
 import asyncio
+import datetime
 import os
 
 
@@ -40,6 +42,48 @@ activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,na
 
 #We need to specify the category of ActivityItems we want YouTrack to return(CustomFieldCategory will return Issue custom Fields)
 activity_item_category = 'CustomFieldCategory'
+
+async def generate_dashboard_pngs():
+    dasboard_templates_dir = "dashboards"
+    dashboard_templates = []
+    for file in os.listdir(dasboard_templates_dir):
+        if file.endswith(".json"):
+            with open(os.path.join(dasboard_templates_dir, file), 'r') as f:
+                dashboard_templates.append(json.load(f))
+    grafana_token = os.getenv('GRAFANA_TOKEN')
+    base_url = "http://grafana:3000/render/"
+    now = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    async with aiohttp.ClientSession() as session:
+        for template in dashboard_templates:
+            uid = template['uid']
+            endpoint = template['templating']['list'][0]['query']['infinityQuery']['url']
+            name = template['title']
+
+            url = f"{base_url}/{uid}{endpoint}"
+
+            panels = template['panels']
+
+            for panel in panels:
+                panel_id = panel['id']
+                panel_grid = panel['gridPos']
+
+                async with session.get(
+                    headers={
+                        "Authorization":f"Bearer {grafana_token}"
+                    },
+                    params={
+                        "width": panel_grid['w']*100,
+                        "height": panel_grid['h']*100,
+                        "tz": "UTC",
+                        "panelId": panel_id
+                    },
+                    url=url
+                ) as response:
+                    response.raise_for_status()
+                    png_data = await response.read()
+                    with open(f"snapshots/{name}/{panel_id}_{now}.png", 'wb') as f:
+                        f.write(png_data)
+
 
 def update_query(last_update):
     return f"{base_query} updated: {last_update} .. Now"
