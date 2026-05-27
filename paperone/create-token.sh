@@ -27,7 +27,9 @@ TOKEN=$(curl -s \
     "name":"external-service-token"
   }' | jq -r '.key')
 
-echo "$TOKEN" > app/shared/grafana-token.txt
+mkdir /app/shared
+
+echo "$TOKEN" > /app/shared/grafana-token.txt
 
 echo "TOKEN CREATED:"
 echo "$TOKEN"
