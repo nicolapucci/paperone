@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends jq wget && rm -
 COPY create-token.sh .
 
 RUN chmod +x create-token.sh
-RUN ./create-token.sh
 
 COPY services/ services/
 COPY youtrack/ youtrack/
@@ -20,4 +19,4 @@ COPY app.py .
 
 EXPOSE 8000
 
-CMD ["python","app.py"]
+CMD ["sh", "-c", "./create-token.sh && python app.py"]
