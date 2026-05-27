@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import aiohttp
 import json
 import asyncio
-import datetime
+from datetime import datetime
 import os
 
 
@@ -51,21 +51,28 @@ async def generate_dashboard_pngs():
             with open(os.path.join(dasboard_templates_dir, file), 'r') as f:
                 dashboard_templates.append(json.load(f))
     grafana_token = os.getenv('GRAFANA_TOKEN')
-    base_url = "http://grafana:3000/render/"
-    now = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    base_url = "http://grafana:3000/render/d-solo/"
+    now = datetime.now().strftime('%Y-%m-%d_%H-%M')
     async with aiohttp.ClientSession() as session:
         for template in dashboard_templates:
             uid = template['uid']
-            endpoint = template['templating']['list'][0]['query']['infinityQuery']['url']
+            try:
+                endpoint = template['templating']['list'][0]['query']['infinityQuery']['url']
+            except Exception as e:
+                logger.warning(f"Error fetching endpoint for dashboard {template['title']}: {e}")
+                continue
             name = template['title']
 
             url = f"{base_url}/{uid}{endpoint}"
 
             panels = template['panels']
 
+            logger.debug(f"About to fetch PNGs for dashboard @ {url}")
             for panel in panels:
                 panel_id = panel['id']
                 panel_grid = panel['gridPos']
+
+                logger.debug(f"Fetching PNG for panel {panel_id} of dashboard {name} with size {panel_grid['w']}x{panel_grid['h']}")
 
                 async with session.get(
                     headers={

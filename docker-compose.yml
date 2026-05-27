@@ -29,14 +29,40 @@ services:
         timeout: 5s
         retries: 20
         start_period: 30s
-    
+
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+    container_name: renderer
+    restart: unless-stopped
+
+    shm_size: 1gb
+
+    environment:
+      - AUTH_TOKEN=${secret-token}
+      - CHROME_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu
+
+    ports:
+      - "8081:8081"
+
+    networks:
+      - grafana
+
   grafana:
     image: grafana/grafana-enterprise
     container_name: grafana
     restart: unless-stopped
     environment:
-      - GL_LOG_LEVEL=warning
+      - GF_RENDERING_SERVER_URL=http://renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
+      - GF_RENDERING_RENDERER_TOKEN=${secret-token}
+
+      - GF_LOG_LEVEL=warning
       - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
+      - GF_SERVER_ROOT_URL=http://grafana:3000/
+      - GF_SERVER_DOMAIN=grafana
+
+      - GF_LOG_LEVEL=debug
+
     ports:
       - '3000:3000'
     volumes:
@@ -62,6 +88,8 @@ services:
 
       YOUTRACK_TOKEN: ${YOUTRACK_TOKEN}
       YOUTRACK_URL: ${YOUTRACK_URL}
+
+      GRAFANA_TOKEN: ${GRAFANA_TOKEN}
 
     networks:
       - paperone
