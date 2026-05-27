@@ -51,7 +51,7 @@ async def generate_dashboard_pngs():
             with open(os.path.join(dasboard_templates_dir, file), 'r') as f:
                 dashboard_templates.append(json.load(f))
     grafana_token = os.getenv('GRAFANA_TOKEN')
-    base_url = "http://grafana:3000/render/d-solo/"
+    base_url = "http://grafana:3000/render/d-solo"
     now = datetime.now().strftime('%Y-%m-%d_%H-%M')
     async with aiohttp.ClientSession() as session:
         for template in dashboard_templates:
@@ -71,6 +71,7 @@ async def generate_dashboard_pngs():
             for panel in panels:
                 panel_id = panel['id']
                 panel_grid = panel['gridPos']
+                panel_title = panel['title']
 
                 logger.debug(f"Fetching PNG for panel {panel_id} of dashboard {name} with size {panel_grid['w']}x{panel_grid['h']}")
 
@@ -88,7 +89,7 @@ async def generate_dashboard_pngs():
                 ) as response:
                     response.raise_for_status()
                     png_data = await response.read()
-                    with open(f"snapshots/{name}/{panel_id}_{now}.png", 'wb') as f:
+                    with open(f"snapshots/{name}/{panel_title}_{now}.png", 'wb') as f:
                         f.write(png_data)
 
 
