@@ -25,10 +25,10 @@ services:
         - postgres_data:/var/lib/postgresql/data
     healthcheck:
         test: ["CMD-SHELL","pg_isready -U ${DB_USER} -d ${DB_NAME}"]
-        interval: 5s
-        timeout: 5s
-        retries: 20
-        start_period: 30s
+        interval: 30s
+        timeout: 10s
+        retries: 5
+        start_period: 20s
 
   renderer:
     image: grafana/grafana-image-renderer:latest
@@ -69,16 +69,13 @@ services:
       - ./provisioning:/etc/grafana/provisioning
       - ./dashboards:/etc/grafana/dashboards
       - grafana_storage:/var/lib/grafana
-      - ./create-token.sh:/create-token.sh
-      - ./shared:/shared
-    command:
-      - /bin/sh
-      - -c
-      - |
-        /run.sh &
-        sleep 15
-        /create-token.sh
-        wait
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
     networks:
       - grafana
@@ -109,9 +106,10 @@ services:
       - ./dashboards:/app/dashboards
       - ./snapshots:/app/snapshots
       - ./logs:/app/logs
-      - ./shared:/app/shared
     depends_on:
       postgresql:
+        condition: service_healthy
+      grafana:
         condition: service_healthy
       
 volumes:

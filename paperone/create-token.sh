@@ -2,7 +2,7 @@
 
 set -e
 
-GRAFANA_URL="localhost:3000"
+GRAFANA_URL="grafana:3000"
 ADMIN_USER="admin"
 ADMIN_PASSWORD="admin"
 
@@ -27,7 +27,7 @@ TOKEN=$(curl -s \
     "name":"external-service-token"
   }' | jq -r '.key')
 
-echo "$TOKEN" > /shared/grafana-token.txt
+echo "$TOKEN" > app/shared/grafana-token.txt
 
 echo "TOKEN CREATED:"
 echo "$TOKEN"

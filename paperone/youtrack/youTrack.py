@@ -58,12 +58,12 @@ async def generate_dashboard_pngs():
         async with aiohttp.ClientSession() as session:
             for template in dashboard_templates:
                 uid = template['uid']
+                name = template['title']
                 try:
                     endpoint = template['templating']['list'][0]['query']['infinityQuery']['url']
                 except Exception as e:
                     logger.warning(f"Error fetching endpoint for dashboard {template['title']}: {e}")
-                    continue
-                name = template['title']
+                    endpoint = name.lower().replace(" ", "-") #if the template doesn't have an endpoint use the name of the dashboard as endpoint (after some formatting)   
 
                 url = f"{base_url}/{uid}{endpoint}"
 
@@ -96,7 +96,7 @@ async def generate_dashboard_pngs():
 
                         os.makedirs(f"snapshots/{name}", exist_ok=True)
                         
-                        with open(f"snapshots/{name}/{panel_title}_{now}.png", 'wb') as f:
+                        with open(f"snapshots/{name}/{panel_title}_{now}_{panel_id}.png", 'wb') as f:
                             f.write(png_data)
     else:
         logger.warning("Grafana token not found, skipping PNG generation")
