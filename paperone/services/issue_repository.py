@@ -615,9 +615,6 @@ class IssueRepository:
         icf = aliased(IssueCustomField)
         tv = aliased(TimeValue)
 
-        data = get_okr2_data()
-        if data:
-            return data
         rc0_releases = ProductRepository.rc0_releases()
 
         try:
@@ -743,10 +740,6 @@ class IssueRepository:
 
     @staticmethod
     def okr4():
-
-        data = get_okr4_data()
-        if data:
-            return data
 
         i = aliased(Issue)
         icf = aliased(IssueCustomField)

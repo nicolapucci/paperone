@@ -251,6 +251,9 @@ async def youTrack_worker():
             logger.info("ActivityItem pulling is completed.")
         except Exception as e:
             logger.error(f"Error during ativities pull {e}")
+        
+        IssueRepository.okr2() #after pulling data from YouTrack we update the OKR2 data in Redis, so that the API can return up-to-date data without having to wait for the whole pull process to complete
+        IssueRepository.okr4() #same for OKR4
 
         await generate_dashboard_pngs()
 

@@ -89,7 +89,6 @@ def set_okr2_data(data:list):
                 new_obj[k] = v
         new_list.append(new_obj)
     redis_client.set('okr2',json.dumps(new_list))
-    redis_client.expire('okr2', 60 * 10)
 
 def clear_okr2_data():
     redis_client.delete('okr2')
@@ -121,4 +120,3 @@ def set_okr4_data(data:list):
                 new_obj[k] = v
         new_list.append(new_obj)
     redis_client.set('okr4',json.dumps(new_list))
-    redis_client.expire('okr4', 60 * 10)
