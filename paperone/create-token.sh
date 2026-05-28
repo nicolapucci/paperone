@@ -2,6 +2,11 @@
 
 set -e
 
+if [ -f /app/shared/grafana-token.txt ] && [ -s /app/shared/grafana-token.txt ]; then
+  echo "Token already exists. Skipping creation."
+  exit 0
+fi
+
 GRAFANA_URL="grafana:3000"
 ADMIN_USER="admin"
 ADMIN_PASSWORD="admin"
@@ -27,7 +32,11 @@ TOKEN=$(curl -s \
     "name":"external-service-token"
   }' | jq -r '.key')
 
-mkdir /app/shared
+if [ -d /app/shared ]; then
+  echo "Token file already exists. Skipping folder creation."
+else
+  mkdir /app/shared
+fi
 
 echo "$TOKEN" > /app/shared/grafana-token.txt
 
