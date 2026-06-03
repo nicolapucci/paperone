@@ -1180,6 +1180,9 @@ class IssueRepository:
         metrics_by_fw = {}
         for fw, validations_list in fw_dict.items():
             rc0_release = rc0_releases.get(fw, None)
+            if not rc0_release:
+                logger.warning(f"Firmware {fw} has validations but no RC0 release date, skipping...")
+                continue
             rc0_release = convert_to_timezone_aware(rc0_release) if rc0_release is not None else None
             
             if fw not in fw_time_spent:

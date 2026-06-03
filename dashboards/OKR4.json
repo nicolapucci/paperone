@@ -151,7 +151,7 @@
           "withTransforms": true
         }
       ],
-      "title": "",
+      "title": "OKR4 Trends",
       "transformations": [
         {
           "id": "filterFieldsByName",

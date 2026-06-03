@@ -455,7 +455,7 @@
           }
         }
       ],
-      "title": "Defect Rate",
+      "title": "OKR1",
       "transformations": [
         {
           "id": "convertFieldType",
