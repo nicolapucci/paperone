@@ -777,11 +777,6 @@ class IssueRepository:
         icf = aliased(IssueCustomField)
         tv = aliased(TimeValue)
 
-        # Check if data is already cached
-        data = get_okr2_data()
-        if data:
-            return data
-
         rc0_releases = ProductRepository.rc0_releases()
 
         # Get production release dates
@@ -943,9 +938,6 @@ class IssueRepository:
                 - queue: average queue position
                 - pre/during/slip/blocked/overassigned: stage distribution percentages
         """
-        data = get_okr4_data()
-        if data:
-            return data
 
         # Set up aliases for complex query
         i = aliased(Issue)

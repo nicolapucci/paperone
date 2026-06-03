@@ -1,340 +1,627 @@
-# Documentazione del progetto  
+# Paperone - Sistema di Monitoraggio delle Performance del TCoE
 
-## Avvio del Progetto
+Un sistema completo di pipeline dati e servizio API per monitorare le performance del TCoE attraverso metriche OKR (Objectives and Key Results).
 
-- Inserire nel file `.env.base` tutti i parametri vuoti e poi rinominarlo in .env
-- Inserire il dump di bugia (rinominato in bugia.sql.old) in `/db-init/`
-- Assicurarsi che Docker e Compose siano presenti nella macchina
-- Eseguire `docker compose up`
+## 📋 Indice dei Contenuti
 
-## Introduzione
-
-Lo scopo del progetto è monitorare l’andamento del TCoE nelle diverse fasi di lavorazione.
-
-L’architettura si basa sull’utilizzo di un componente intermedio (“middleman”) che si occupa di:
-- aggiornare i dati  
-- elaborare le informazioni provenienti da fonti esterne  
-
-Le principali fonti includono:
-- server di servizi utilizzati dal team  
-- file statici  
-- wiki  
-
-I dati elaborati vengono poi utilizzati da Grafana per la generazione delle dashboard.
+- [Panoramica](#panoramica)
+- [Architettura](#architettura)
+- [Componenti](#componenti)
+- [Metriche OKR](#metriche-okr)
+- [Installazione](#installazione)
+- [Utilizzo](#utilizzo)
+- [Flusso dei Dati](#flusso-dei-dati)
+- [Schema del Database](#schema-del-database)
+- [Endpoint API](#endpoint-api)
+- [Sviluppo](#sviluppo)
 
 ---
 
-## Servizi
+## 🎯 Panoramica
 
-Il progetto è stato sviluppato utilizzando Docker e comprende quattro servizi (container) principali:
+Paperone è un servizio "middleman" (intermediario) che:
+- **Aggrega** dati da più fonti esterne (YouTrack, Wiki, file CSV)
+- **Elabora** e analizza i dati di tracciamento delle issue e testing
+- **Calcola** le metriche OKR per misurare le performance del TCoE
+- **Espone** API REST per dashboard e visualizzazione via Grafana
 
-- Redis  
-  → sistema di caching utilizzato per velocizzare le risposte  
+### Caratteristiche Principali
 
-- PostgreSQL  
-  → database relazionale che ospita i dati del progetto  
-
-- Paperone  
-  → server sviluppato in FastAPI (Python)  
-  → si occupa di:
-    - interrogare le fonti esterne  
-    - leggere/scrivere dal database  
-    - elaborare i dati  
-    - fornire i dati a Grafana tramite API  
-
-- Grafana  
-  → piattaforma di visualizzazione  
-  → utilizza i dati forniti da Paperone per costruire le dashboard  
+✅ Calcolo metriche OKR in tempo reale  
+✅ Aggregazione multi-source  
+✅ Cache Redis per ottimizzazione performance  
+✅ Persistenza PostgreSQL  
+✅ Interfaccia REST con FastAPI  
+✅ Tracciamento cronologico dei cambiamenti  
+✅ Sincronizzazione dati automatizzata  
 
 ---
 
-## Sicurezza
+## 🏗️ Architettura
 
-Attualmente il progetto non prevede un sistema di sicurezza strutturato.
+Paperone utilizza un'**architettura orientata ai servizi** deployata con Docker Compose:
 
-- L’unico livello di protezione presente è quello offerto da Grafana  
-## Il concetto di OKR
+```
+┌─────────────────┐
+│    Grafana      │  Layer di visualizzazione
+└────────┬────────┘
+         │ HTTP API
+┌────────▼────────┐
+│   Paperone      │  Elaborazione dati e API
+│   (FastAPI)     │
+└─┬──────┬────────┘
+  │      │
+  │      └────────────────┐
+  │                       │
+┌─▼──────┐    ┌──────────▼──┐
+│ Redis  │    │ PostgreSQL   │  Layer di persistenza
+└────────┘    └──────────────┘
 
-Un OKR (Objective and Key Results) è un indicatore utilizzato per valutare le performance rispetto a specifici obiettivi.
-
-Nel nostro caso, gli OKR definiti sono i seguenti:
-
-- OKR 1: Defect-rate  
-- OKR 2: Tempo di esecuzione dei test  
-- OKR 3: Test per FTE  
-- OKR 4: Validation  
-
----
-
-## OKR 1: Defect-rate
-
-Questo OKR misura il defect-rate, ovvero la percentuale che rappresenta il rapporto tra:
-
-- bug segnalati dai clienti  
-- totale dei bug rilevati dall’azienda  
-
----
-
-## OKR 2: Tempo di esecuzione dei test
-
-Questo OKR misura il tempo di esecuzione della fase di test, suddiviso per attività specifiche all’interno di un intervallo temporale definito.
-
-Definizione dell’intervallo:
-- Data di inizio  
-  → dedotta dalla pubblicazione dell’RC0  
-
-- Data di fine  
-  → approssimata dalla pubblicazione del changelog  
+Fonti di Dati Esterne:
+├── YouTrack (Tracciamento issue)
+├── Wiki (Changelog/Info release)
+├── File CSV (Dati test)
+└── Configurazione Manuale
+```
 
 ---
 
-### Assunzioni
+## 🔧 Componenti
 
-- Un membro del team non esegue test se ha validation assegnati e in lavorazione  
-- I validation sono suddivisi in sessioni distinte  
+### 1. **Servizio API Paperone** (FastAPI)
+- Server applicativo principale
+- Gestisce l'elaborazione dati e i calcoli OKR
+- Espone endpoint REST
+- Coordina l'accesso a database e cache
 
----
+### 2. **Database** (PostgreSQL)
+- Memorizza issue, custom field e cronologia dei cambiamenti
+- Accesso basato su ORM con SQLAlchemy
+- Supporta query complesse per il calcolo delle metriche
 
-### Regole di calcolo
+### 3. **Layer Cache** (Redis)
+- Accelera le risposte API
+- Cachea le metriche OKR calcolate
+- Riduce il carico del database
 
-- Vengono considerate solo le sessioni di validation successive alla pubblicazione dell’RC0  
-- Se una sessione attraversa il momento di pubblicazione dell’RC0:  
-  → viene conteggiato solo il tempo compreso tra RC0 e la fine della lavorazione  
-
----
-
-## OKR 3: Test per FTE
-
-Questo OKR misura il rapporto tra:
-
-- numero di test eseguiti  
-- FTE (Full-Time Equivalent)  
-
-L’FTE rappresenta l’unità di misura del lavoro ed è calcolato come:
-
-- somma delle ore lavorative settimanali dei membri del team  
-
-Nel contesto di questo progetto:
-- viene utilizzata come unità di riferimento un periodo di 2 settimane lavorative  
-
-## OKR 4: Validation
-
-Questo OKR misura diversi aspetti legati al processo di lavorazione dei validation.
+### 4. **Fonti Dati**
+- **YouTrack**: Dati issue e attività
+- **Wiki**: Informazioni release firmware
+- **Mapper Hardcoded**: Per i casi in cui non è disponibile l'accesso diretto alle fonti interessate
 
 ---
 
-### Premesse
+## 📊 Metriche OKR
 
-A causa della mancanza di dati fondamentali per stimare con precisione il ciclo di vita dei validation, sono state introdotte alcune assunzioni per ricavare in modo approssimativo le informazioni mancanti:
+### OKR 1: Defect Rate
+Misura il rapporto tra bug segnalati dai clienti e bug totali rilevati.
 
-- Un membro del TCoE lavora su un solo validation alla volta  
-- Ogni validation è gestito da una sola persona alla volta  
-- Una volta iniziata una sessione di lavorazione, il membro continua fino alla conclusione della sessione  
-  → la sessione termina quando lo stage viene impostato a `Blocked` o `Done`  
-- Un membro del team non esegue test se ha validation ancora assegnati da lavorare  
-- Tutti i membri lavorano a tempo pieno:  
-  → dalle 09:00 CET alle 18:00 CET  
-  → dal lunedì al venerdì (festivi esclusi)  
+```
+Defect Rate = Bug Clienti / Bug Totali
+```
 
----
+**Calcolato da:**
+- Issue con Type = "Bug"
+- Raggruppate per Origine (Cliente vs Interno) e Prodotto
+- Periodo: Mensile
 
-### Logiche di calcolo
-
-In assenza di dati diretti, le fasi di vita dei validation vengono stimate a partire da eventi osservabili.
-
-#### Eventi principali
-
-Per ogni validation vengono identificati due eventi chiave:
-
-- Assegnazione  
-  → cambio del campo `assignee`  
-
-- Fine lavorazione  
-  → quando lo stage viene impostato a `Done` o `Blocked`  
-
-Per ogni evento di fine lavorazione viene associata l'assegnazione più recente precedente.
+**Output include:**
+- Percentuale defect rate mensile
+- Contesto rilascio firmware
+- Ratios breakdown per origine/prodotto
 
 ---
 
-#### Derivazione degli intervalli
+### OKR 2: Tempo di Esecuzione dei Test
+Misura il tempo dedicato a validazioni e test relativamente alla durata totale della fase di test.
 
-A partire dalle coppie (assegnazione, fine lavorazione) si ricavano:
+**Intervalli chiave:**
+- **Release RC0**: Inizio fase di test
+- **Release Produzione**: Fine fase di test
+- **Durata Fase Test**: Tempo tra RC0 e produzione
 
-- Inizio lavorazione  
-  → è la data più vicina tra:  
-    - il completamento del validation precedente  
-    - l'assegnazione del validation corrente  
+**Metriche calcolate:**
+- Durata totale fase test (assoluta e ore lavorative)
+- Suddivisione tempo: Validazioni / Test Manuali / Test Automatizzati
+- Media mobile 6 mesi per analisi trend
 
-- Code (queue)  
-  → insieme dei completamenti di altre sessioni di lavorazione dello stesso assignee  
-    compresi tra assegnazione e inizio lavorazione  
-
-- Prima assegnazione al TCoE  
-  → assegnazione meno recente  
-
-- Ultimo completamento  
-  → fine lavorazione più recente  
-
----
-
-#### Intervalli temporali
-
-Da questi eventi vengono definiti i seguenti intervalli:
-
-- Lavorazione  
-  → da inizio lavorazione a fine lavorazione  
-
-- Idle  
-  → da assegnazione a inizio lavorazione  
-
-- Non in mano al TCoE  
-  → tutto il tempo restante  
+**Assunzioni:**
+- Team lavora Lun-Ven, 8:00-17:00 UTC (1 ora pausa 12:00-13:00)
+- Contano solo le ore lavorative (festivi esclusi)
+- Contano solo validazioni dopo RC0
 
 ---
 
-### Classificazione (bucket) dei validation
+### OKR 3: Test per FTE
+Misura la produttività di testing relativamente alla capacità del team.
 
-I validation vengono suddivisi in quattro categorie principali in base alla fix version e al momento della release di RC0:
+```
+Test per FTE = Test Totali Eseguiti / FTE (Full-Time Equivalent)
+```
 
-- Pre  
-  → validation assegnati e completati prima della release di RC0  
+FTE calcolato come: Somma delle ore lavorative settimanali per membro del team
 
-- During  
-  → validation assegnati e completati dopo la release di RC0  
-
-- Slipped_to_TCoE  
-  → validation assegnati prima di RC0 ma completati dopo  
-    per cause imputabili al TCoE  
-
-- Slipped_not_to_TCoE  
-  → validation assegnati prima di RC0 ma completati dopo  
-    per cause non imputabili al TCoE  
-    (es. bug scoperti in fase di pre-release e risolti successivamente)  
-
-## Workflows
-
-Il progetto è quasi completamente automatizzato. Tuttavia, la raccolta dei dati da BugIA e dal License Server non è ancora automatizzabile, pertanto alcuni dati devono essere inseriti manualmente.
-
-Il progetto prevede due workflow principali:
-- Raccolta dati  
-- Generazione dashboard  
+**Periodo:** Periodi di 2 settimane
 
 ---
 
-### Raccolta dati
+### OKR 4: Turnaround Validazioni
+Metrica comprehensiva che traccia il ciclo di vita delle validazioni e gli indicatori di qualità.
 
-Il prelievo dei dati avviene da diverse fonti:
+**Bucket di classificazione validazioni:**
+- **Pre**: Assegnate e completate prima di RC0
+- **During**: Assegnate e completate dopo RC0
+- **Slipped (TCoE)**: Assegnate pre-RC0, completate post-RC0 (responsabilità TCoE)
+- **Slipped (Not TCoE)**: Assegnate pre-RC0, completate post-RC0 (cause esterne)
 
-- YouTrack  
-  → da cui vengono recuperati i dati delle issue e i relativi Custom Fields  
-
-- Cartella ./bugia_csv  
-  → contiene i file CSV da cui vengono estratti i dati dei test  
-
-- Wiki dei changelog delle firmware versions  
-  → da cui vengono recuperate le informazioni sulle pubblicazioni dei changelog per ciascuna versione firmware  
-
-- Mapper custom  
-  → definito manualmente nel file:  
-    ./services/product_repository.py  
-
-Nota:
-Non essendo disponibile un accesso diretto a BugIA e al License Server:
-- i dati dei test vengono importati dai CSV presenti in ./bugia_csv  
-- le pubblicazioni delle release candidate (RC) sono attualmente hardcoded  
+**Metriche calcolate per firmware:**
+- Tempo medio speso per validazione
+- Distribuzione quote tempo (lavoro/attesa/bloccato)
+- Profondità e posizione coda
+- Analisi tempo bloccato
+- Rilevamento over-assignment
 
 ---
 
-### Generazione dashboard
+## 🚀 Installazione
 
-Flusso di generazione:
+### Prerequisiti
+- Docker & Docker Compose
 
-1. Grafana interroga un endpoint di Paperone  
-2. Paperone verifica la presenza dei dati in cache (Redis)  
-   → se presenti, salta direttamente al punto 5  
-3. Se i dati non sono in cache, Paperone interroga il database per ottenere i dati grezzi  
-4. Paperone elabora i dati grezzi e li salva in cache  
-5. Paperone restituisce i dati elaborati  
-6. Grafana utilizza i dati per costruire la dashboard  
+### Quick Start
 
----
+1. **Clonare il repository**
+```bash
+git clone <repository-url>
+cd paperone
+```
 
-### Database
+2. **Configurare l'ambiente**
+```bash
+cp .env.base .env
+# Modificare .env con le proprie impostazioni
+# Recuperare un Token di accesso valido da YouTrack e inserirlo nel file .env
+```
 
-L’interazione con il database è gestita tramite l’ORM SQLAlchemy.
+3. **Inizializzare il database**
+- Repecuperare l'sql dump di bugia e inserirlo in `db_init/bugia.sql.old`  
 
-Struttura:
-- Modelli  
-  → definiti nella cartella:  
-    ./models  
+4. **Avviare i servizi**
+```bash
+docker-compose up -d
+```
 
-- Repository (accesso ai dati)  
-  → definiti nella cartella:  
-    ./services/{*}_repository.py  
-
-Dove { * } può assumere i seguenti valori:
-- issue  
-- product  
-- test  
-
-I repository contengono i metodi per:
-- inserimento dei dati  
-- modifica dei dati  
-- lettura dei dati  
-
-
-## Struttura delle relazioni
-
-### Issue
-- Relazione con IssueCustomField  
-  issue.id_readable = issueCustomField.issue_id  
-  → Serve per recuperare i custom field associati a una issue
+5. **Accedere all'applicazione**
+- API: http://localhost:8000
+- Grafana: http://localhost:3000
+- API Docs: http://localhost:8000/docs
 
 ---
 
-### IssueCustomField 
-- Relazione con FieldValue  
-  issueCustomField.value_id = field_value.id  
-  → Permette di ottenere il valore corrente del custom field
+## 📈 Utilizzo
+
+### Recupero Metriche OKR
+
+```bash
+# Ottenere Defect Rate
+curl http://paperone:8000/okr1
+
+# Ottenere Durata Fase Test
+curl http://paperone:8000/okr2
+
+# Ottenere Test per FTE
+curl http://paperone:8000/okr3
+
+# Ottenere Metriche Validazioni
+curl http://paperone:8000/okr4
+```
+
+***Paperone non è visibile dall'esterno, per interrogare i suoi endpoint bisogna passare per Grafana***
+
+### Sincronizzazione Dati
+
+Paperone sincronizza automaticamente i dati da YouTrack:
+
+```python
+from services.issue_repository import IssueRepository
+
+# Aggiornare issue e custom field
+IssueRepository.upsert_issues(issue_data)
+
+# Aggiornare cronologia cambiamenti
+IssueRepository.upsert_activity_items(activity_data)
+```
+
+### Integrazione Grafana
+
+Grafana interroga gli endpoint di Paperone e visualizza le metriche:
+
+
+1. Aggiungere Paperone come fonte di dati
+2. Creare dashboard usando query JSON
+3. Configurare intervalli di aggiornamento (metriche sono cachate)
+
+***Grafana ha 4 dashboard ottenute via provisioning, per modificarle bisogna modificare i json di provisioning in /dashboards***
 
 ---
 
-### IssueCustomFieldChange
-- Relazione con IssueCustomField  
-  issueCustomFieldChange.field_id = issueCustomField.id  
-  → Identifica quale custom field è stato modificato
+## 🔄 Flusso dei Dati
 
-- Relazione con FieldValue (valore precedente)  
-  issueCustomFieldChange.old_value_id = field_value.id  
-  → Valori rimossi nella transazione
+### Flusso di Query (Calcolo OKR)
 
-- Relazione con FieldValue (valore nuovo)  
-  issueCustomFieldChange.new_value_id = field_value.id  
-  → Valori aggiunti nella transazione
+```
+1. Client richiede /okr{1-4}
+   ↓
+2. Paperone riceve richiesta
+   ↓
+3. Verificare cache Redis
+   ├─→ Trovato: Ritornare dati cachati
+   └─→ Non trovato: Continuare
+   ↓
+4. Interrogare database PostgreSQL
+   ↓
+5. Elaborare dati grezzi:
+   - Applicare logica di business
+   - Calcolare metriche
+   - Generare aggregazioni
+   ↓
+6. Memorizzare in cache Redis
+   ↓
+7. Ritornare al client
+   ↓
+8. Grafana visualizza i dati
+```
+
+***OKR2 & OKR4 vengono calcolati ogni volta chè avviene il pull e salvati in cache, non vengono ri-elaborati se non al successivo pull***
+
+### Flusso Ingestione Dati
+
+```
+Fonti Esterne
+├── API YouTrack
+│   ├─→ Dati issue (id, summary, created, updated)
+│   ├─→ Custom field (Type, Origine, Product, Assignee, etc.)
+│   └─→ Cronologia attività (cambiamenti field con timestamp)
+├── Wiki/Changelog
+│   └─→ Date rilascio firmware
+
+            ↓
+
+Servizio Paperone
+├─→ Estrarre e normalizzare dati
+├─→ Applicare trasformazioni
+├─→ Validare rispetto allo schema
+└─→ Inserire/aggiornare database
+
+            ↓
+
+Database PostgreSQL
+├─→ Issues
+├─→ IssueCustomField
+├─→ IssueCustomFieldChange
+├─→ FieldValue e Value (polimorfici)
+└─→ Cronologia Custom Field
+
+            ↓
+
+Cache Redis
+└─→ Metriche OKR calcolate
+```
 
 ---
 
-### FieldValue
-- Rappresenta un valore generico di un campo  
-- Relazione con Value (tabella polimorfica)  
-  field_value.id = value.id  
-  → Il valore reale si ottiene tramite le tabelle figlie di value
+## 📚 Schema del Database
+
+### Entità Principali
+
+#### Issue
+Rappresenta un elemento di lavoro da YouTrack.
+
+```sql
+CREATE TABLE issues (
+    id SERIAL PRIMARY KEY,
+    youtrack_id VARCHAR UNIQUE,
+    id_readable VARCHAR,
+    summary TEXT,
+    parent_id VARCHAR,
+    created TIMESTAMP,
+    updated TIMESTAMP,
+    tags TEXT[]
+);
+```
+
+#### IssueCustomField
+Memorizza i valori dei custom field per le issue.
+
+```sql
+CREATE TABLE issue_custom_fields (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR,
+    issue_id VARCHAR,
+    value_id UUID,
+    UNIQUE(name, issue_id),
+    FOREIGN KEY (value_id) REFERENCES field_values(id)
+);
+```
+
+#### IssueCustomFieldChange
+Traccia i cambiamenti cronologici ai custom field.
+
+```sql
+CREATE TABLE issue_custom_field_changes (
+    id SERIAL PRIMARY KEY,
+    field_id INTEGER,
+    old_value_id UUID,
+    new_value_id UUID,
+    timestamp TIMESTAMP,
+    FOREIGN KEY (field_id) REFERENCES issue_custom_fields(id)
+);
+```
+
+#### FieldValue e Value (Polimorfi)
+Memorizzazione generico di valori con tabelle figlie specifiche per tipo.
+
+```sql
+CREATE TABLE field_values (
+    id UUID PRIMARY KEY
+);
+
+CREATE TABLE values (
+    id UUID PRIMARY KEY,
+    type VARCHAR,
+    FOREIGN KEY (id) REFERENCES field_values(id)
+);
+
+-- Tabelle figlie:
+CREATE TABLE string_values (
+    id UUID PRIMARY KEY,
+    value VARCHAR,
+    FOREIGN KEY (id) REFERENCES values(id)
+);
+
+CREATE TABLE number_values (
+    id UUID PRIMARY KEY,
+    value NUMERIC,
+    FOREIGN KEY (id) REFERENCES values(id)
+);
+
+CREATE TABLE date_values (
+    id UUID PRIMARY KEY,
+    value TIMESTAMP,
+    FOREIGN KEY (id) REFERENCES values(id)
+);
+
+CREATE TABLE time_values (
+    id UUID PRIMARY KEY,
+    value INTERVAL,
+    FOREIGN KEY (id) REFERENCES values(id)
+);
+```
+
+### Relazioni
+
+```
+Issue
+  ├─ 1:N → IssueCustomField
+  │         ├─ 1:1 → FieldValue → Value (polimorfici)
+  │         └─ 1:N → IssueCustomFieldChange
+  │                   ├─ 1:1 → FieldValue (valore vecchio)
+  │                   └─ 1:1 → FieldValue (valore nuovo)
+  └─ N:1 → Issue (parent_id)
+```
 
 ---
 
-### Value (tabella polimorfica)
-- Contiene un campo "type" per distinguere il tipo di dato  
-- Relazione:  
-  value.id = <tabella_figlia>.id  
+## 🔌 Endpoint API
 
-#### Tabelle figlie:
-- date_values   → valori di tipo data  
-- number_value  → valori numerici  
-- string_value  → stringhe  
-- time_value    → valori temporali  
+### GET /okr1
+**Metriche Defect Rate**
+
+Response:
+```json
+[
+  {
+    "date": "2026-05-01T00:00:00",
+    "Defect Rate": 0.25,
+    "FW Released": 1,
+    "Cliente-Product1-ratio": 0.15,
+    "Internal-Product1-ratio": 0.10
+  }
+]
+```
+
+### GET /okr2
+**Metriche Durata Fase Test**
+
+Response:
+```json
+[
+  {
+    "fw": "1.2.3",
+    "start": 1715000000,
+    "test_phase_duration": 86400,
+    "validations_time_share": 30.5,
+    "manual_time_share": 25.3,
+    "automated_time_share": 35.2,
+    "other": 9.0,
+    "media_a_6_mesi": 90000
+  }
+]
+```
+
+### GET /okr3
+**Test per FTE**
+
+Response:
+```json
+{
+  "period": "2026-05-15",
+  "total_tests": 450,
+  "fte": 2.5,
+  "tests_per_fte": 180
+}
+```
+
+### GET /okr4
+**Metriche Turnaround Validazioni**
+
+Response:
+```json
+[
+  {
+    "fw": "1.2.3",
+    "date": "2026-05-01T00:00:00",
+    "avg_time_spent": 3600,
+    "time_spent_share": 0.45,
+    "blocked_share": 0.15,
+    "waiting_share": 0.40,
+    "queue": 1.2,
+    "pre": 0.25,
+    "during": 0.50,
+    "blocked": 0.10,
+    "overassigned": 0.05,
+    "count": 20
+  }
+]
+```
 
 ---
 
-## Riassunto veloce
-Issue → IssueCustomField → FieldValue → Value → Tabelle figlie  
-IssueCustomFieldChange traccia le modifiche (old_value / new_value)
+## 💻 Sviluppo
+
+### Struttura del Progetto
+
+```
+paperone/
+├── app.py                          # Entry point applicazione FastAPI
+├── requirements.txt                # Dipendenze Python
+├── Dockerfile                      # Configurazione container
+│
+├── models/                         # Modelli ORM SQLAlchemy
+│   ├── base.py                    # Classe modello base
+│   ├── issues.py                  # Issue, IssueCustomField, IssueCustomFieldChange
+│   ├── value.py                   # FieldValue, Value, e sottoclassi
+│   └── users.py                   # Modelli User
+│
+├── services/                       # Logica di business e accesso dati
+│   ├── postgres_engine.py         # Connessione database e session factory
+│   ├── redis_client.py            # Operazioni cache Redis
+│   ├── logger.py                  # Configurazione logging
+│   ├── issue_repository.py        # Accesso dati issue e calcolo OKR1/2/4
+│   ├── product_repository.py      # Dati prodotto/firmware e release
+│   └── test_repository.py         # Dati test e calcolo OKR3
+│
+├── youtrack/                       # Integrazione YouTrack
+│   ├── __init__.py
+│   └── youTrack.py                # Sincronizzazione background con API YouTrack
+│
+└── dashboards/                     # Definizioni dashboard Grafana
+```
+
+### File Chiave
+
+#### `issue_repository.py`
+Logica principale di calcolo OKR:
+- **`okr1()`**: Analisi defect rate bug
+- **`okr2()`**: Durata fase test e suddivisione effort team
+- **`okr4()`**: Turnaround validazioni e metriche qualità
+- **`upsert_issues()`**: Sincronizzazione issue da YouTrack
+- **`upsert_activity_items()`**: Tracciamento cronologico cambiamenti field
+
+#### `product_repository.py`
+Informazioni firmware e release:
+- Date release RC0 (attualmente hardcoded)
+- Date release produzione (da Wiki)
+- Mapping prodotto-firmware
+
+#### `youtrack.py`
+Servizio background per sincronizzazione dati continua:
+- Poll API YouTrack a intervalli regolari
+- Fetch issue nuove e cambiamenti attività
+- Memorizzazione in PostgreSQL
+
+### Aggiungere Nuove Metriche OKR
+
+1. Creare metodo di calcolo nel repository appropriato:
+```python
+@staticmethod
+def okrN():
+    """Descrizione OKR"""
+    # Implementazione
+    return result_list
+```
+
+2. Aggiungere endpoint API in `app.py`:
+```python
+@app.get('/okrN')
+def OKRN():
+    return IssueRepository.okrN()
+```
+
+3. Aggiornare dashboard Grafana per visualizzare la nuova metrica
+
+
+---
+
+## 🔐 Note di Sicurezza
+
+⚠️ **Stato Attuale:** Solo sicurezza di base
+
+- Grafana fornisce layer di autenticazione
+- Nessuna autenticazione API su endpoint Paperone
+- Credenziali database in variabili d'ambiente
+- Considerare implementazione di:
+  - Autenticazione token API
+  - Rate limiting
+  - Validazione input
+  - HTTPS/TLS
+  - Crittografia database
+
+---
+
+## 📝 Assunzioni e Limitazioni
+
+### Calcolo Ore Lavorative
+- Solo Lun-Ven (weekend esclusi)
+- Festivi italiani (provincia Pisa) esclusi
+- Ore di lavoro 8:00-17:00 CET
+- 1 ora pausa pranzo (12:00-13:00)
+
+### Assunzioni OKR4 Validation (Assunzioni usate per calcolare il il numero di validation massimo che il gruppo sarebbe stato in grado di eseguire)
+- Una validation per membro TCoE alla volta
+- Lavoro continuo fino al completamento
+- Data creazione usata se nessun assignment TCoE trovato
+- Coda calcolata dall'ordinamento timestamp completamento
+
+### Limitazioni Dati
+- Date RC0 attualmente hardcoded (non da API)
+- Dati BugIA importati manualmente da CSV
+- Nessuna integrazione diretta License Server
+- Parsing changelog Wiki richiesto
+
+---
+
+
+## 📞 Supporto & Troubleshooting
+
+### Problemi Comuni
+
+**Metriche non si aggiornano:**
+- Verificare connessione Redis: `redis-cli PING`
+- Verificare che PostgreSQL è in esecuzione
+- Controllare log servizio background YouTrack
+- Pulire cache manualmente se necessario
+
+**Dati mancanti nelle dashboard:**
+- Controllare mapping firmware/prodotto in `product_repository.py`
+- Assicurare credenziali API YouTrack valide
+- Rivedere log database
+
+**Problemi di performance:**
+- Controllare cache hit rate Redis
+- Monitorare tempo query database
+- Considerare paginazione per large dataset
+- Scalare orizzontalmente se necessario
+
+---
+

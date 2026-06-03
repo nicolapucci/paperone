@@ -90,9 +90,6 @@ def set_okr2_data(data:list):
         new_list.append(new_obj)
     redis_client.set('okr2',json.dumps(new_list))
 
-def clear_okr2_data():
-    redis_client.delete('okr2')
-
 
 
 def get_okr4_data():
