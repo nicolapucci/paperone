@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import aiohttp
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 
@@ -43,7 +43,14 @@ activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,na
 #We need to specify the category of ActivityItems we want YouTrack to return(CustomFieldCategory will return Issue custom Fields)
 activity_item_category = 'CustomFieldCategory'
 
+#We create a function to generate PNG snapshots of the Grafana dashboards,
+#so that they can be used in the report without having to wait for the whole pull process to complete.
+#The function fetches the dashboard templates from the "dashboards" folder,
+#then for each template it fetches the PNG for each panel and saves it in the "snapshots" folder with a name that includes the dashboard name, panel name, timestamp and panel id (to avoid issues with panels with the same name).
 async def generate_dashboard_pngs():
+    #Load dashboard templates that grafana uses to generate the dashboards,
+    #these templates are in JSON format and contain the information about the panels and the endpoint to fetch the PNG for each panel,
+    #if the endpoint is not specified we will try to generate it using the name of the dashboard (after some formatting)
     dasboard_templates_dir = "dashboards"
     dashboard_templates = []
     for file in os.listdir(dasboard_templates_dir):
@@ -79,36 +86,50 @@ async def generate_dashboard_pngs():
 
                     logger.debug(f"Fetching PNG for panel {panel_id} of dashboard {name} with size {panel_grid['w']}x{panel_grid['h']}")
 
-                    async with session.get(
-                        headers={
-                            "Authorization":f"Bearer {grafana_token}"
-                        },
-                        params={
-                            "width": panel_grid['w']*100,
-                            "height": panel_grid['h']*100,
-                            "tz": "UTC",
-                            "panelId": panel_id
-                        },
-                        url=url
-                    ) as response:
-                        response.raise_for_status()
-                        png_data = await response.read()
+                    try:
+                        async with session.get(
+                            headers={
+                                "Authorization":f"Bearer {grafana_token}"
+                            },
+                            params={
+                                "width": panel_grid['w']*100,#We increase the size of the panel to have better quality in the PNG, but this also means that the generation of the PNG will take more time and resources, so we need to find a balance between quality and performance, for now we set it to 100x the original size, but this can be adjusted if needed
+                                "height": panel_grid['h']*100,#same as width
+                                "panelId": panel_id,
+                                #We might want to add some parameters to the URL to filter the data in the panels,
+                                #for example to only show data from the last month,
+                                #this can be done by adding a time range parameter to the URL,
+                                #for now we will just fetch the PNGs without any filters reliying on the default settings of the panels,
+                                #but this can be easily implemented if needed
+                            },
+                            url=url
+                        ) as response:
+                            response.raise_for_status()
+                            png_data = await response.read()
 
-                        os.makedirs(f"snapshots/{name}", exist_ok=True)
-                        
-                        with open(f"snapshots/{name}/{panel_title}_{now}_{panel_id}.png", 'wb') as f:
-                            f.write(png_data)
+                            response.raise_for_status()
+
+                            os.makedirs(f"snapshots/{name}", exist_ok=True)
+                            
+                            with open(f"snapshots/{name}/{panel_title}_{now}_{panel_id}.png", 'wb') as f:
+                                f.write(png_data)
+                    except Exception as e:
+                        logger.warning(f"Error fetching PNG for panel {panel_id} of dashboard {name}: {e}")
+                        continue
     else:
         logger.warning("Grafana token not found, skipping PNG generation")
 
 def update_query(last_update):
+
     return f"{base_query} updated: {last_update} .. Now"
 
 
 def upsert_issues_thread(chunk):
     IssueRepository.upsert_issues(issue_data=chunk)
 
-async def get_issues(fields,query):#sync fetch issues from YouTrack
+#We fetch the issues from YouTrack in chunks of 3000 items,
+#and for each chunk we create a new task in the ThreadPoolExecutor to insert the items in the database,
+#so that we can fetch data from YouTrack asynchronously without having to wait for the database operations to complete.
+async def get_issues(fields,query):
 
     top = 3000
     skip = 0
@@ -189,9 +210,13 @@ async def get_issue_activities(issue_id, fields,session):
         logger.warning(f"Error fetching ActivityItem {issue_id}")
         raise e
        
-
+#We fetch the activities for each issue asynchronously, but we still want to limit the number of concurrent requests to YouTrack to avoid overwhelming it, so we use a semaphore to only allow 4 concurrent requests at a time.
+#We also use a ThreadPoolExecutor to run the blocking database operations in separate threads, so that they don't block the main event loop and we can still fetch data from YouTrack asynchronously.
+# Finally, we use a buffer to store the fetched ActivityItems and insert them in batches of 3000 to improve performance.
 async def process_issue_activities( executor,last_activities_pull, batch_size=3000):
+    #we fetch the ids of the issues that have had activities since the last pull, then we fetch the activities for each issue asynchronously, and we insert them in the database in batches of <batch_size> to improve performance
     issue_ids = IssueRepository.get_validation_ids(last_activities_pull)
+    #we use a semaphore to limit the number of concurrent requests to YouTrack, to avoid overwhelming it
     semaphore = asyncio.Semaphore(4)
     loop = asyncio.get_running_loop()
 
@@ -234,10 +259,10 @@ async def youTrack_worker():
 
         last_activities_pull = get_last_avtivities_pull()
         
-        query=update_query(last_issue_pull.strftime('%Y-%m')) if last_issue_pull else base_query#if there is a previous update only ask for data from 1h before that
+        query=update_query((last_issue_pull- timedelta(hours=1)).strftime('%Y-%m')) if last_issue_pull else base_query#if there is a previous update only ask for data from 1h before that
 
         try:    
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:#we use a thread pool executor to run the blocking database operations in separate threads, so that they don't block the main event loop and we can still fetch data from YouTrack asynchronously
                 await process_issues(executor,query)
             set_last_issue_pull()
             logger.info("Issue pulling is completed.")
@@ -252,10 +277,20 @@ async def youTrack_worker():
         except Exception as e:
             logger.error(f"Error during ativities pull {e}")
         
-        IssueRepository.okr2() #after pulling data from YouTrack we update the OKR2 data in Redis, so that the API can return up-to-date data without having to wait for the whole pull process to complete
-        IssueRepository.okr4() #same for OKR4
+        try:
+            IssueRepository.okr2() #after pulling data from YouTrack we update the OKR2 data in Redis, so that the API can return up-to-date data without having to wait for the whole pull process to complete
+        except Exception as e:
+            logger.error(f"Error during OKR2 update: {e}")
 
-        await generate_dashboard_pngs()
+        try:        
+            IssueRepository.okr4() #same for OKR4
+        except Exception as e:
+            logger.error(f"Error during OKR4 update: {e}")
+
+        try:
+            await generate_dashboard_pngs()#after pulling data from YouTrack we generate new PNG snapshots of the Grafana dashboards, so that they can be used in the report without having to wait for the whole pull process to complete
+        except Exception as e:
+            logger.error(f"Error during PNG generation: {e}")
 
         await asyncio.sleep(
                     60*60*(update_frequency)

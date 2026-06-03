@@ -7,8 +7,7 @@ from services.postgres_engine import engine
 from services.product_repository import ProductRepository
 from services.logger import logger
 from services.test_repository import okr3
-from services.redis_client import redis_client
-
+from services.redis_client import get_okr2_data, get_okr4_data
 app = FastAPI()
 
 
@@ -24,7 +23,7 @@ def OKR1():
 
 @app.get('/okr2')
 def OKR2():
-    return redis_client.get_okr2_data()
+    return get_okr2_data()
 
 @app.get('/okr3')
 def OKR3():
@@ -32,7 +31,7 @@ def OKR3():
 
 @app.get('/okr4')
 def OKR4():
-    return redis_client.get_okr4_data()
+    return get_okr4_data()
 
 
 

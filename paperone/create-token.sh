@@ -1,5 +1,4 @@
 #!/bin/sh
-
 set -e
 
 if [ -f /app/shared/grafana-token.txt ] && [ -s /app/shared/grafana-token.txt ]; then
@@ -31,6 +30,11 @@ TOKEN=$(curl -s \
   -d '{
     "name":"external-service-token"
   }' | jq -r '.key')
+
+if [ -z "$TOKEN" ]; then
+  echo "Failed to create token. PNG generation might fail."
+  exit 0
+fi
 
 if [ -d /app/shared ]; then
   echo "Token file already exists. Skipping folder creation."

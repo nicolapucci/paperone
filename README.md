@@ -1,5 +1,12 @@
 # Documentazione del progetto  
 
+## Avvio del Progetto
+
+- Inserire nel file `.env.base` tutti i parametri vuoti e poi rinominarlo in .env
+- Inserire il dump di bugia (rinominato in bugia.sql.old) in `/db-init/`
+- Assicurarsi che Docker e Compose siano presenti nella macchina
+- Eseguire `docker compose up`
+
 ## Introduzione
 
 Lo scopo del progetto è monitorare l’andamento del TCoE nelle diverse fasi di lavorazione.
