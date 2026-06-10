@@ -17,7 +17,3 @@ echo "Cleaning dump..."
     -U "$POSTGRES_USER" \
     -d "$POSTGRES_DB" \
     -f /tmp/clean.sql
-
-else
-  echo "No dump file found. Skipping import."
-fi
