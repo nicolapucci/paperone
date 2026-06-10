@@ -8,7 +8,8 @@ from services.issue_repository import IssueRepository
 from services.logger import logger
 
 from concurrent.futures import ThreadPoolExecutor
-
+from collections import defaultdict
+import re
 import aiohttp
 import json
 import asyncio
@@ -43,6 +44,44 @@ activity_item_field = 'id,author(id,login,name),timestamp,added(id,idReadable,na
 #We need to specify the category of ActivityItems we want YouTrack to return(CustomFieldCategory will return Issue custom Fields)
 activity_item_category = 'CustomFieldCategory'
 
+def remove_old_pngs():
+    logger.info("Removing old PNG snapshots...")
+    pattern = re.compile(
+    r"^(?P<title>.+)_(?P<date>\d{4}-\d{2}-\d{2})_(?P<time>\d{2}-\d{2})_(?P<panel_id>[^_]+)\.png$"
+)
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    groups = defaultdict(list)
+    for folder in os.listdir("snapshots"):
+        files = os.listdir(f"snapshots/{folder}")
+        for file in files:
+            m = pattern.match(file)
+            if not m:
+                continue
+
+            day = m.group("date")
+
+            # non toccare gli snapshot di oggi
+            if day == today:
+                continue
+
+            panel_id = m.group("panel_id")
+
+            timestamp = f"{day}_{m.group('time')}"
+
+            groups[(folder, panel_id, day)].append((timestamp, file))
+
+        for names,files in groups.items():
+            files.sort(key=lambda x: x[0])
+
+            # elimina tutti tranne l'ultimo
+            for _, file in files[:-1]:
+                logger.info(f"Deleting {file}")
+                try:
+                    os.remove(f"snapshots/{names[0]}/{file}")
+                except Exception as e:
+                    logger.error(f"Error deleting {file}: {e}")
+                    continue
 #We create a function to generate PNG snapshots of the Grafana dashboards,
 #so that they can be used in the report without having to wait for the whole pull process to complete.
 #The function fetches the dashboard templates from the "dashboards" folder,
@@ -71,8 +110,10 @@ async def generate_dashboard_pngs():
                 except Exception as e:
                     logger.warning(f"Error fetching endpoint for dashboard {template['title']}: {e}")
                     endpoint = name.lower().replace(" ", "-") #if the template doesn't have an endpoint use the name of the dashboard as endpoint (after some formatting)   
-
+                    endpoint = endpoint if endpoint.startswith("/") else f"/{endpoint}" #make sure the endpoint starts with a "/"
+                    uid = uid if uid.endswith("/") else uid.replace("/", "") #make sure the uid doesn't end or start with a "/"
                 url = f"{base_url}/{uid}{endpoint}"
+                
 
                 panels = template['panels']
 
@@ -115,6 +156,10 @@ async def generate_dashboard_pngs():
                     except Exception as e:
                         logger.warning(f"Error fetching PNG for panel {panel_id} of dashboard {name}: {e}")
                         continue
+    try:
+        remove_old_pngs()
+    except Exception as e:
+            logger.error(f"Error removing old PNGs: {e}")
     else:
         logger.warning("Grafana token not found, skipping PNG generation")
 
